@@ -10,6 +10,8 @@ interface Order {
   delivery_type: string;
   picker_name: string;
   checker_name: string;
+  checker2_name: string;
+  needs_second_checker: boolean;
   picker_start: string;
   picker_end: string;
   checker_start: string;
@@ -202,47 +204,40 @@ export default function OrdersPage() {
 
         {/* ── SUMMARY STATS BAR ── */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
-        <div className="bg-blue-900 rounded-2xl p-4 text-center">
-            <div className="text-2xl md:text-3xl font-bold text-white">
-            {orders.length}
-            </div>
+          <div className="bg-blue-900 rounded-2xl p-4 text-center">
+            <div className="text-2xl md:text-3xl font-bold text-white">{orders.length}</div>
             <div className="text-blue-300 text-xs mt-1 font-medium">Total Orders</div>
-        </div>
-
-        <div className="bg-blue-900 rounded-2xl p-4 text-center">
+          </div>
+          <div className="bg-blue-900 rounded-2xl p-4 text-center">
             <div className="text-2xl md:text-3xl font-bold text-blue-300">
-            {orders.filter(o => o.status === 'UNASSIGNED').length}
+              {orders.filter(o => o.status === 'UNASSIGNED').length}
             </div>
             <div className="text-blue-400 text-xs mt-1 font-medium">Unassigned</div>
-        </div>
-
-        <div className="bg-blue-900 rounded-2xl p-4 text-center">
+          </div>
+          <div className="bg-blue-900 rounded-2xl p-4 text-center">
             <div className="text-2xl md:text-3xl font-bold text-yellow-300">
-            {orders.filter(o => ['ASSIGNED', 'PICKING'].includes(o.status)).length}
+              {orders.filter(o => ['ASSIGNED', 'PICKING'].includes(o.status)).length}
             </div>
             <div className="text-blue-400 text-xs mt-1 font-medium">In Progress</div>
-        </div>
-
-        <div className="bg-blue-900 rounded-2xl p-4 text-center">
+          </div>
+          <div className="bg-blue-900 rounded-2xl p-4 text-center">
             <div className="text-2xl md:text-3xl font-bold text-cyan-300">
-            {orders.filter(o => ['PICKED', 'CHECKING'].includes(o.status)).length}
+              {orders.filter(o => ['PICKED', 'CHECKING'].includes(o.status)).length}
             </div>
             <div className="text-blue-400 text-xs mt-1 font-medium">Picked</div>
-        </div>
-
-        <div className="bg-blue-900 rounded-2xl p-4 text-center">
+          </div>
+          <div className="bg-blue-900 rounded-2xl p-4 text-center">
             <div className="text-2xl md:text-3xl font-bold text-green-300">
-            {orders.filter(o => o.status === 'DONE').length}
+              {orders.filter(o => o.status === 'DONE').length}
             </div>
             <div className="text-blue-400 text-xs mt-1 font-medium">Done</div>
-        </div>
-
-        <div className="bg-orange-900 rounded-2xl p-4 text-center">
+          </div>
+          <div className="bg-orange-900 rounded-2xl p-4 text-center">
             <div className="text-2xl md:text-3xl font-bold text-orange-300">
-            {orders.filter(o => ['PICKED', 'DONE'].includes(o.status) && !o.approved).length}
+              {orders.filter(o => ['PICKED', 'DONE'].includes(o.status) && !o.approved).length}
             </div>
             <div className="text-orange-400 text-xs mt-1 font-medium">Pending Approval</div>
-        </div>
+          </div>
         </div>
 
         {/* Message */}
@@ -349,7 +344,8 @@ export default function OrdersPage() {
                   <th className="px-4 py-3 text-left font-semibold">Picker</th>
                   <th className="px-4 py-3 text-left font-semibold">Pick Time</th>
                   <th className="px-4 py-3 text-left font-semibold">Idle Time</th>
-                  <th className="px-4 py-3 text-left font-semibold">Checker</th>
+                  <th className="px-4 py-3 text-left font-semibold">Checker 1</th>
+                  <th className="px-4 py-3 text-left font-semibold">Checker 2</th>
                   <th className="px-4 py-3 text-left font-semibold">Check Time</th>
                   <th className="px-4 py-3 text-left font-semibold">Total</th>
                   <th className="px-4 py-3 text-left font-semibold">Actions</th>
@@ -358,7 +354,7 @@ export default function OrdersPage() {
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="text-center py-8 text-blue-300">
+                    <td colSpan={12} className="text-center py-8 text-blue-300">
                       No orders found
                     </td>
                   </tr>
@@ -391,7 +387,31 @@ export default function OrdersPage() {
                       </td>
                       <td className="px-4 py-3 text-blue-600 font-mono text-xs">{o.picking_time || '—'}</td>
                       <td className="px-4 py-3 text-orange-600 font-mono text-xs">{o.idle_time || '—'}</td>
-                      <td className="px-4 py-3 text-blue-800 font-medium">{o.checker_name || '—'}</td>
+
+                      {/* Checker 1 */}
+                      <td className="px-4 py-3">
+                        <span className="text-blue-800 font-medium text-xs">
+                          {o.checker_name || '—'}
+                        </span>
+                      </td>
+
+                      {/* Checker 2 */}
+                      <td className="px-4 py-3">
+                        {o.needs_second_checker ? (
+                          o.checker2_name ? (
+                            <span className="text-purple-700 font-medium text-xs">
+                              {o.checker2_name}
+                            </span>
+                          ) : (
+                            <span className="bg-purple-100 text-purple-600 px-2 py-0.5 rounded-lg text-xs font-medium whitespace-nowrap">
+                              ⏳ Waiting...
+                            </span>
+                          )
+                        ) : (
+                          <span className="text-blue-300 text-xs">—</span>
+                        )}
+                      </td>
+
                       <td className="px-4 py-3 text-blue-600 font-mono text-xs">{o.checking_time || '—'}</td>
                       <td className="px-4 py-3 text-blue-900 font-mono text-xs font-bold">{o.total_time || '—'}</td>
                       <td className="px-4 py-3">
@@ -449,18 +469,45 @@ export default function OrdersPage() {
                   <div><span className="font-semibold">Size:</span> {o.size || '—'}</div>
                   <div><span className="font-semibold">Delivery:</span> {o.delivery_type || '—'}</div>
                   <div><span className="font-semibold">Picker:</span> {o.picker_name || '—'}</div>
-                  <div><span className="font-semibold">Checker:</span> {o.checker_name || '—'}</div>
                   <div><span className="font-semibold">Pick Time:</span> {o.picking_time || '—'}</div>
                   <div>
                     <span className="font-semibold">Idle:</span>{' '}
                     <span className="text-orange-600">{o.idle_time || '—'}</span>
                   </div>
                   <div><span className="font-semibold">Check Time:</span> {o.checking_time || '—'}</div>
+
+                  {/* Checker 1 */}
                   <div>
+                    <span className="font-semibold">Checker 1:</span>{' '}
+                    <span>{o.checker_name || '—'}</span>
+                  </div>
+
+                  {/* Checker 2 */}
+                  <div>
+                    <span className="font-semibold">Checker 2:</span>{' '}
+                    {o.needs_second_checker ? (
+                      o.checker2_name ? (
+                        <span className="text-purple-700 font-medium">{o.checker2_name}</span>
+                      ) : (
+                        <span className="text-purple-500 text-xs">⏳ Waiting...</span>
+                      )
+                    ) : <span>—</span>}
+                  </div>
+
+                  <div className="col-span-2">
                     <span className="font-semibold">Total:</span>{' '}
                     <span className="font-bold">{o.total_time || '—'}</span>
                   </div>
                 </div>
+
+                {/* 2nd checker waiting banner */}
+                {o.needs_second_checker && !o.checker2_name && (
+                  <div className="mt-2 bg-purple-50 border border-purple-200 rounded-xl px-3 py-2 text-center">
+                    <span className="text-purple-600 text-xs font-bold">
+                      👥 Waiting for 2nd checker to join
+                    </span>
+                  </div>
+                )}
 
                 {/* Assign picker — only for UNASSIGNED / ASSIGNED */}
                 {['UNASSIGNED', 'ASSIGNED'].includes(o.status) && (
@@ -483,7 +530,7 @@ export default function OrdersPage() {
                   </div>
                 )}
 
-                {/* Approve button — only for PICKED / DONE and not yet approved */}
+                {/* Approve button */}
                 {['PICKED', 'DONE'].includes(o.status) && !o.approved && (
                   <button
                     onClick={() => approveOrder(o.id, o.approved)}
@@ -493,7 +540,7 @@ export default function OrdersPage() {
                   </button>
                 )}
 
-                {/* Already approved badge */}
+                {/* Approved badge */}
                 {o.approved && (
                   <div className="mt-3 w-full bg-green-100 text-green-700 font-bold py-3 rounded-xl text-sm text-center">
                     ✅ Approved

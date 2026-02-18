@@ -49,34 +49,76 @@ router.get('/:id/orders', async (req, res) => {
     );
     if (!checker.rows[0]) return res.status(404).json({ error: 'Checker not found' });
 
-    // Orders ready to be checked (PICKED status, not assigned to anyone)
+    // Orders ready to be checked (PICKED status)
     const available = await pool.query(
-      `SELECT o.id, o.so_number, o.status, o.size, o.delivery_type, p.name AS picker_name
+      `SELECT o.id, o.so_number, o.status, o.size, o.delivery_type,
+              o.needs_second_checker, o.checker_id,
+              p.name AS picker_name,
+              c.name AS checker1_name
        FROM orders o
        LEFT JOIN pickers p ON o.picker_id = p.id
+       LEFT JOIN checkers c ON o.checker_id = c.id
        WHERE o.status = 'PICKED'
-       AND DATE(o.created_at) = CURRENT_DATE
-       ORDER BY o.picker_end ASC`,
-      []
+         AND DATE(o.created_at) = CURRENT_DATE
+         AND (o.needs_second_checker = false OR o.needs_second_checker IS NULL)
+       ORDER BY o.picker_end ASC`
     );
 
-    // Orders this checker is currently checking
-    const mine = await pool.query(
-      `SELECT o.id, o.so_number, o.status, o.size, o.delivery_type, p.name AS picker_name
+    // Orders needing second checker (PICKED, needs_second_checker=true, no checker2 yet)
+    const needSecond = await pool.query(
+      `SELECT o.id, o.so_number, o.status, o.size, o.delivery_type,
+              o.needs_second_checker, o.checker_id,
+              p.name AS picker_name,
+              c.name AS checker1_name
        FROM orders o
        LEFT JOIN pickers p ON o.picker_id = p.id
-       WHERE o.checker_id = $1 AND o.status = 'CHECKING'
-       AND DATE(o.created_at) = CURRENT_DATE`,
+       LEFT JOIN checkers c ON o.checker_id = c.id
+       WHERE o.status = 'CHECKING'
+         AND o.needs_second_checker = true
+         AND o.checker2_id IS NULL
+         AND o.checker_id != $1
+         AND DATE(o.created_at) = CURRENT_DATE
+       ORDER BY o.picker_end ASC`,
       [req.params.id]
     );
 
-    // Orders this checker completed today
-    const done = await pool.query(
-      `SELECT o.id, o.so_number, o.status, o.size, o.delivery_type, p.name AS picker_name
+    // Orders this checker is currently checking (as checker 1)
+    const mine = await pool.query(
+      `SELECT o.id, o.so_number, o.status, o.size, o.delivery_type,
+              o.needs_second_checker, o.checker2_id,
+              p.name AS picker_name,
+              c2.name AS checker2_name
        FROM orders o
        LEFT JOIN pickers p ON o.picker_id = p.id
-       WHERE o.checker_id = $1 AND o.status = 'DONE'
-       AND DATE(o.created_at) = CURRENT_DATE
+       LEFT JOIN checkers c2 ON o.checker2_id = c2.id
+       WHERE o.checker_id = $1 AND o.status = 'CHECKING'
+         AND DATE(o.created_at) = CURRENT_DATE`,
+      [req.params.id]
+    );
+
+    // Orders this checker is checking as checker 2
+    const mineAsChecker2 = await pool.query(
+      `SELECT o.id, o.so_number, o.status, o.size, o.delivery_type,
+              o.needs_second_checker,
+              p.name AS picker_name,
+              c1.name AS checker1_name
+       FROM orders o
+       LEFT JOIN pickers p ON o.picker_id = p.id
+       LEFT JOIN checkers c1 ON o.checker_id = c1.id
+       WHERE o.checker2_id = $1 AND o.status = 'CHECKING'
+         AND DATE(o.created_at) = CURRENT_DATE`,
+      [req.params.id]
+    );
+
+    // Done orders
+    const done = await pool.query(
+      `SELECT o.id, o.so_number, o.status, o.size, o.delivery_type,
+              p.name AS picker_name
+       FROM orders o
+       LEFT JOIN pickers p ON o.picker_id = p.id
+       WHERE (o.checker_id = $1 OR o.checker2_id = $1)
+         AND o.status = 'DONE'
+         AND DATE(o.created_at) = CURRENT_DATE
        ORDER BY o.checker_end DESC`,
       [req.params.id]
     );
@@ -84,7 +126,9 @@ router.get('/:id/orders', async (req, res) => {
     res.json({
       checkerName: checker.rows[0].name,
       availableOrders: available.rows,
+      needSecondChecker: needSecond.rows,
       myOrders: mine.rows,
+      myOrdersAsChecker2: mineAsChecker2.rows,
       doneOrders: done.rows
     });
   } catch (err) {
