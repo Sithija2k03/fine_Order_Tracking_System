@@ -3,11 +3,14 @@ import { type ReactElement } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import LoginPage from './pages/LoginPage';
 import RoleSelectPage from './pages/RoleSelectPage';
+import DepartmentSelectPage from './pages/DepartmentSelectPage';
+import AdminDashboard from './pages/admin/AdminDashboard';
 import PickerSelectPage from './pages/PickerSelectPage';
 import PickerDashboard from './pages/PickerDashboard';
 import CheckerSelectPage from './pages/CheckerSelectPage';
 import CheckerDashboard from './pages/CheckerDashboard';
-import AdminDashboard from './pages/admin/AdminDashboard';
+import OrdersPage from './pages/admin/OrdersPanel'
+import ApprovedOrdersPage from './pages/admin/ApprovedOrdersPage';
 
 function ProtectedRoute({ children }: { children: ReactElement }) {
   const { isAdmin } = useAuth();
@@ -19,7 +22,7 @@ function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          {/* Public routes */}
+          {/* Public */}
           <Route path="/" element={<RoleSelectPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/pickers" element={<PickerSelectPage />} />
@@ -27,14 +30,12 @@ function App() {
           <Route path="/checkers" element={<CheckerSelectPage />} />
           <Route path="/checker/:id" element={<CheckerDashboard />} />
 
-          {/* Admin only */}
-          <Route path="/admin" element={
-            <ProtectedRoute>
-              <AdminDashboard />
-            </ProtectedRoute>
-          } />
+          {/* Admin */}
+          <Route path="/admin" element={<ProtectedRoute><DepartmentSelectPage /></ProtectedRoute>} />
+          <Route path="/admin/:department" element={<ProtectedRoute><AdminDashboard /></ProtectedRoute>} />
+          <Route path="/admin/:department/orders" element={<ProtectedRoute><OrdersPage /></ProtectedRoute>} />
+          <Route path="/admin/:department/approved" element={<ProtectedRoute><ApprovedOrdersPage /></ProtectedRoute>} />
 
-          {/* Fallback */}
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </BrowserRouter>
