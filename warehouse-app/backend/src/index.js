@@ -11,7 +11,8 @@ app.use(cors({
     'http://localhost:5173',
     'http://localhost:5174',
     'http://localhost:5175',
-    process.env.FRONTEND_URL, // your Vercel URL — set in Render env vars
+    'https://fine-order-tracking-system.vercel.app',
+    process.env.FRONTEND_URL,
   ].filter(Boolean),
   methods: ['GET', 'POST', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
@@ -33,7 +34,7 @@ app.get('/api/health', (req, res) => res.json({
 // ── Keep-alive: ping self every 10 min to prevent Render free tier sleep ──
 cron.schedule('*/10 * * * *', () => {
   const renderUrl = process.env.RENDER_URL;
-  if (!renderUrl) return; // only runs in production when RENDER_URL is set
+  if (!renderUrl) return;
 
   https.get(`${renderUrl}/api/health`, (res) => {
     console.log(`🔄 Keep-alive ping → ${res.statusCode}`);
