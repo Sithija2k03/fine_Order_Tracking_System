@@ -45,7 +45,7 @@ export default function CheckerSelectPage() {
             onClick={() => selectDepartment('assembly')}
             className="bg-blue-800 hover:bg-blue-700 active:scale-95 text-white font-bold py-6 md:py-8 rounded-2xl text-xl md:text-2xl shadow-lg transition-all"
           >
-            🔩 Assembly
+            🔩 Accessories
           </button>
           <button
             onClick={() => navigate('/')}
