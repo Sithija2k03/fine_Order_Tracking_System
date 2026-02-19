@@ -31,9 +31,7 @@ export default function AdminDashboard() {
       ]);
       setPickers(p.data);
       setCheckers(c.data);
-    } catch (err) {
-      console.error(err);
-    }
+    } catch (err) { console.error(err); }
   };
 
   const showMessage = (msg: string) => {
@@ -43,8 +41,6 @@ export default function AdminDashboard() {
 
   const addPicker = async () => {
     if (!newPicker.trim()) return;
-    console.log('dept value is:', dept);        // ADD THIS
-    console.log('newPicker value is:', newPicker); // ADD THIS
     setLoading(true);
     try {
       await api.post('/pickers', { name: newPicker.trim(), department: dept });
@@ -117,6 +113,28 @@ export default function AdminDashboard() {
           </div>
         </div>
 
+        {/* ── STATS CARDS ── */}
+        <div className="grid grid-cols-2 gap-4 mb-6">
+          <div className="bg-blue-900 rounded-2xl p-5 flex items-center gap-4">
+            <div className="w-12 h-12 bg-blue-700 rounded-xl flex items-center justify-center text-2xl flex-shrink-0">
+              🧳
+            </div>
+            <div>
+              <div className="text-3xl font-bold text-white">{pickers.length}</div>
+              <div className="text-blue-300 text-sm font-medium mt-0.5">Total Pickers</div>
+            </div>
+          </div>
+          <div className="bg-blue-900 rounded-2xl p-5 flex items-center gap-4">
+            <div className="w-12 h-12 bg-blue-700 rounded-xl flex items-center justify-center text-2xl flex-shrink-0">
+              ✅
+            </div>
+            <div>
+              <div className="text-3xl font-bold text-white">{checkers.length}</div>
+              <div className="text-blue-300 text-sm font-medium mt-0.5">Total Checkers</div>
+            </div>
+          </div>
+        </div>
+
         {/* Message */}
         {message && (
           <div className="bg-blue-100 text-blue-900 px-4 py-3 rounded-xl mb-4 font-medium text-center">
@@ -130,88 +148,65 @@ export default function AdminDashboard() {
           {/* Pickers Section */}
           <div className="bg-white rounded-2xl p-4 md:p-6">
             <h2 className="text-xl font-bold text-blue-900 mb-4">🧳 Pickers</h2>
-
-            {/* Add Picker */}
             <div className="flex gap-2 mb-4">
               <input
-                type="text"
-                value={newPicker}
+                type="text" value={newPicker}
                 onChange={e => setNewPicker(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && addPicker()}
                 placeholder="Picker name"
                 className="flex-1 px-3 py-3 border-2 border-blue-100 rounded-xl text-sm md:text-base focus:outline-none focus:border-blue-500"
               />
-              <button
-                onClick={addPicker}
-                disabled={loading}
-                className="bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold px-4 py-3 rounded-xl transition-all"
-              >
+              <button onClick={addPicker} disabled={loading}
+                className="bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold px-4 py-3 rounded-xl transition-all">
                 + Add
               </button>
             </div>
-
-            {/* Pickers List */}
             <div className="space-y-2 max-h-64 overflow-y-auto">
               {pickers.length === 0 ? (
                 <p className="text-blue-300 text-center py-4">No pickers added yet</p>
-              ) : (
-                pickers.map(p => (
-                  <div key={p.id} className="flex items-center justify-between bg-blue-50 px-4 py-3 rounded-xl">
-                    <span className="font-medium text-blue-900 text-sm md:text-base">{p.name}</span>
-                    <button
-                      onClick={() => deletePicker(p.id)}
-                      className="text-red-500 hover:text-red-700 font-bold text-lg transition-colors"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))
-              )}
+              ) : pickers.map(p => (
+                <div key={p.id} className="flex items-center justify-between bg-blue-50 px-4 py-3 rounded-xl">
+                  <span className="font-medium text-blue-900 text-sm md:text-base">{p.name}</span>
+                  <button onClick={() => deletePicker(p.id)}
+                    className="text-red-500 hover:text-red-700 font-bold text-lg transition-colors">
+                    ✕
+                  </button>
+                </div>
+              ))}
             </div>
           </div>
 
           {/* Checkers Section */}
           <div className="bg-white rounded-2xl p-4 md:p-6">
             <h2 className="text-xl font-bold text-blue-900 mb-4">✅ Checkers</h2>
-
-            {/* Add Checker */}
             <div className="flex gap-2 mb-4">
               <input
-                type="text"
-                value={newChecker}
+                type="text" value={newChecker}
                 onChange={e => setNewChecker(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && addChecker()}
                 placeholder="Checker name"
                 className="flex-1 px-3 py-3 border-2 border-blue-100 rounded-xl text-sm md:text-base focus:outline-none focus:border-blue-500"
               />
-              <button
-                onClick={addChecker}
-                disabled={loading}
-                className="bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold px-4 py-3 rounded-xl transition-all"
-              >
+              <button onClick={addChecker} disabled={loading}
+                className="bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold px-4 py-3 rounded-xl transition-all">
                 + Add
               </button>
             </div>
-
-            {/* Checkers List */}
             <div className="space-y-2 max-h-64 overflow-y-auto">
               {checkers.length === 0 ? (
                 <p className="text-blue-300 text-center py-4">No checkers added yet</p>
-              ) : (
-                checkers.map(c => (
-                  <div key={c.id} className="flex items-center justify-between bg-blue-50 px-4 py-3 rounded-xl">
-                    <span className="font-medium text-blue-900 text-sm md:text-base">{c.name}</span>
-                    <button
-                      onClick={() => deleteChecker(c.id)}
-                      className="text-red-500 hover:text-red-700 font-bold text-lg transition-colors"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))
-              )}
+              ) : checkers.map(c => (
+                <div key={c.id} className="flex items-center justify-between bg-blue-50 px-4 py-3 rounded-xl">
+                  <span className="font-medium text-blue-900 text-sm md:text-base">{c.name}</span>
+                  <button onClick={() => deleteChecker(c.id)}
+                    className="text-red-500 hover:text-red-700 font-bold text-lg transition-colors">
+                    ✕
+                  </button>
+                </div>
+              ))}
             </div>
           </div>
+
         </div>
       </div>
     </div>
