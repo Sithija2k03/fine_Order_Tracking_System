@@ -255,6 +255,7 @@ router.patch('/:id/end-checking-2', async (req, res) => {
       `UPDATE orders 
        SET status       = 'DONE',
            checker2_end = NOW(),
+           checker_end  = NOW(),
            updated_at   = NOW()
        WHERE id = $1 AND checker2_id = $2 AND status = 'CHECKING' RETURNING *`,
       [req.params.id, checker_id]
