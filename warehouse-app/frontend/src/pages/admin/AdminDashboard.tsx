@@ -18,7 +18,7 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
 
-  const deptLabel = department === 'machinery' ? '🔧 Machinery' : '🔩 Assembly';
+  const deptLabel = department === 'machinery' ? '🔧 Machinery' : '🔩 Accessories';
   const dept = department || 'machinery';
 
   useEffect(() => { fetchData(); }, [department]);

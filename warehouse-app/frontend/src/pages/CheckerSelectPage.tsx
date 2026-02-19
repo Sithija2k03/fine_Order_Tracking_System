@@ -45,7 +45,7 @@ export default function CheckerSelectPage() {
             onClick={() => selectDepartment('assembly')}
             className="bg-blue-800 hover:bg-blue-700 active:scale-95 text-white font-bold py-6 md:py-8 rounded-2xl text-xl md:text-2xl shadow-lg transition-all"
           >
-            🔩 Assembly
+            🔩 Accessories
           </button>
           <button
             onClick={() => navigate('/')}
@@ -66,7 +66,7 @@ export default function CheckerSelectPage() {
         <div className="text-center mb-6 md:mb-10">
           <div className="text-4xl md:text-5xl mb-2">✅</div>
           <h1 className="text-2xl md:text-3xl font-bold text-white">
-            {department === 'machinery' ? '🔧 Machinery' : '🔩 Assembly'} — Checkers
+            {department === 'machinery' ? '🔧 Machinery' : '🔩 Accessories'} — Checkers
           </h1>
           <p className="text-blue-300 mt-1">Tap your name to continue</p>
         </div>

@@ -29,7 +29,7 @@ export default function ApprovedOrdersPage() {
   const { department } = useParams<{ department: string }>();
   const navigate = useNavigate();
   const dept = department || 'machinery';
-  const deptLabel = dept === 'machinery' ? '🔧 Machinery' : '🔩 Assembly';
+  const deptLabel = dept === 'machinery' ? '🔧 Machinery' : '🔩 Accessories';
 
   const [orders, setOrders] = useState<ApprovedOrder[]>([]);
   const [message, setMessage] = useState('');
