@@ -10,6 +10,8 @@ interface Order {
   delivery_type: string;
   picker_name: string;
   checker_name: string;
+  checker2_name: string;
+  needs_second_checker: boolean;
   picker_start: string;
   picker_end: string;
   checker_start: string;
@@ -321,7 +323,8 @@ export default function OrdersPage() {
                   <th className="px-4 py-3 text-left font-semibold">Picker</th>
                   <th className="px-4 py-3 text-left font-semibold">Pick Time</th>
                   <th className="px-4 py-3 text-left font-semibold">Idle Time</th>
-                  <th className="px-4 py-3 text-left font-semibold">Checker</th>
+                  <th className="px-4 py-3 text-left font-semibold">Checker 1</th>
+                  <th className="px-4 py-3 text-left font-semibold">Checker 2</th>
                   <th className="px-4 py-3 text-left font-semibold">Check Time</th>
                   <th className="px-4 py-3 text-left font-semibold">Total</th>
                   <th className="px-4 py-3 text-left font-semibold">Actions</th>
@@ -329,7 +332,7 @@ export default function OrdersPage() {
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan={11} className="text-center py-8 text-blue-300">No orders found</td></tr>
+                  <tr><td colSpan={12} className="text-center py-8 text-blue-300">No orders found</td></tr>
                 ) : filtered.map((o, i) => (
                   <tr key={o.id} className={i % 2 === 0 ? 'bg-white' : 'bg-blue-50'}>
                     <td className="px-4 py-3 font-bold text-blue-900">{o.so_number}</td>
@@ -353,7 +356,25 @@ export default function OrdersPage() {
                     </td>
                     <td className="px-4 py-3 text-blue-600 font-mono text-xs">{o.picking_time || '—'}</td>
                     <td className="px-4 py-3 text-orange-600 font-mono text-xs">{o.idle_time || '—'}</td>
+
+                    {/* Checker 1 */}
                     <td className="px-4 py-3 text-blue-800 font-medium">{o.checker_name || '—'}</td>
+
+                    {/* Checker 2 */}
+                    <td className="px-4 py-3">
+                      {o.needs_second_checker ? (
+                        o.checker2_name ? (
+                          <span className="text-purple-700 font-medium">{o.checker2_name}</span>
+                        ) : (
+                          <span className="bg-purple-100 text-purple-600 px-2 py-0.5 rounded-lg text-xs font-medium whitespace-nowrap">
+                            ⏳ Waiting...
+                          </span>
+                        )
+                      ) : (
+                        <span className="text-blue-300 text-xs">—</span>
+                      )}
+                    </td>
+
                     <td className="px-4 py-3 text-blue-600 font-mono text-xs">{o.checking_time || '—'}</td>
                     <td className="px-4 py-3 text-blue-900 font-mono text-xs font-bold">{o.total_time || '—'}</td>
                     <td className="px-4 py-3">
@@ -403,7 +424,16 @@ export default function OrdersPage() {
                 <div><span className="font-semibold">Size:</span> {o.size || '—'}</div>
                 <div><span className="font-semibold">Delivery:</span> {o.delivery_type || '—'}</div>
                 <div><span className="font-semibold">Picker:</span> {o.picker_name || '—'}</div>
-                <div><span className="font-semibold">Checker:</span> {o.checker_name || '—'}</div>
+                <div><span className="font-semibold">Checker 1:</span> {o.checker_name || '—'}</div>
+                {o.needs_second_checker && (
+                  <div className="col-span-2">
+                    <span className="font-semibold">Checker 2:</span>{' '}
+                    {o.checker2_name
+                      ? <span className="text-purple-700 font-medium">{o.checker2_name}</span>
+                      : <span className="text-purple-500">⏳ Waiting...</span>
+                    }
+                  </div>
+                )}
                 <div><span className="font-semibold">Pick Time:</span> {o.picking_time || '—'}</div>
                 <div><span className="font-semibold">Idle:</span> <span className="text-orange-600">{o.idle_time || '—'}</span></div>
                 <div><span className="font-semibold">Check Time:</span> {o.checking_time || '—'}</div>
