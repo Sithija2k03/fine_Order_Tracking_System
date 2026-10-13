@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../../api/index';
+import UploadOrdersModal from './UploadOrdersModal';
 
 interface Order {
   id: string;
@@ -51,6 +52,7 @@ export default function OrdersPage() {
   const [loading, setLoading]         = useState(false);
   const [message, setMessage]         = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showUpload, setShowUpload]   = useState(false);
   const [date, setDate]               = useState(today);
 
   const [soNumber, setSoNumber]         = useState('');
@@ -198,9 +200,14 @@ export default function OrdersPage() {
                   Today
                 </button>
               )}
-              <button onClick={() => setShowAddForm(!showAddForm)}
+              <button onClick={() => setShowUpload(true)}
                 className="bg-blue-500 hover:bg-blue-400 active:scale-95 text-white font-bold px-4 py-3 rounded-xl text-sm md:text-base transition-all">
-                + Add Order
+                📤 Upload Orders
+              </button>
+              <button onClick={() => setShowAddForm(!showAddForm)}
+                className="bg-blue-800 hover:bg-blue-700 active:scale-95 text-blue-100 font-semibold px-4 py-3 rounded-xl text-sm md:text-base transition-all"
+                title="Add a single order manually">
+                + Add Manually
               </button>
               <button onClick={exportOrders}
                 className="bg-blue-700 hover:bg-blue-600 active:scale-95 text-white font-bold px-4 py-3 rounded-xl text-sm md:text-base transition-all">
@@ -247,6 +254,21 @@ export default function OrdersPage() {
           <div className="bg-blue-100 text-blue-900 px-4 py-3 rounded-xl mb-4 font-medium text-center">
             {message}
           </div>
+        )}
+
+        {/* Upload Sales Order Report */}
+        {showUpload && (
+          <UploadOrdersModal
+            department={dept}
+            pickers={pickers}
+            onClose={() => setShowUpload(false)}
+            onImported={(msg) => {
+              setShowUpload(false);
+              if (date !== today) setDate(today);   // imported orders are created today
+              else fetchData();
+              showMsg(msg);
+            }}
+          />
         )}
 
         {/* Add Order Form */}

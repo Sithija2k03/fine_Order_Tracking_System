@@ -2,6 +2,18 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const auth = require('../middleware/auth');
+const multer = require('multer');
+const { parseSalesOrderReport } = require('../utils/salesOrderParser');
+
+// Report uploads are kept in memory only — nothing is written to disk.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },   // 10 MB
+  fileFilter: (req, file, cb) => {
+    const ok = /\.xlsx$/i.test(file.originalname);
+    cb(ok ? null : new Error('Please upload the report as an Excel .xlsx file'), ok);
+  },
+});
 
 // ─── GET ROUTES (named before /:id) ──────────────────────────────────
 
@@ -139,6 +151,102 @@ router.post('/', auth, async (req, res) => {
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── SALES ORDER REPORT UPLOAD ───────────────────────────────────────
+// Step 1: upload the ERP report as-is → returns one row per sales order
+//         (blank rows filled down, G → Giving, size suggested). Saves nothing.
+router.post('/upload/preview', auth, (req, res) => {
+  upload.single('file')(req, res, async (uploadErr) => {
+    if (uploadErr) {
+      const msg = uploadErr.code === 'LIMIT_FILE_SIZE' ? 'File is too large (max 10 MB)' : uploadErr.message;
+      return res.status(400).json({ error: msg });
+    }
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    const { department } = req.query;
+    try {
+      const parsed = await parseSalesOrderReport(req.file.buffer);
+
+      // Flag orders that are already in the system for this department
+      const existing = await pool.query(
+        `SELECT so_number, status, DATE(created_at) AS created_date
+           FROM orders
+          WHERE so_number = ANY($1) ${department ? 'AND department = $2' : ''}`,
+        department ? [parsed.orders.map(o => o.so_number), department]
+                   : [parsed.orders.map(o => o.so_number)]
+      );
+      const already = new Map(existing.rows.map(r => [r.so_number, r]));
+
+      res.json({
+        ...parsed,
+        orders: parsed.orders.map(o => ({
+          ...o,
+          already_exists: already.has(o.so_number),
+          existing_status: already.get(o.so_number)?.status || null,
+        })),
+      });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+});
+
+// Step 2: create the orders the admin confirmed in the preview.
+// Body: { department, orders: [{ so_number, size, delivery_type, picker_id? }] }
+// Orders already in the system for this department are skipped, not duplicated.
+router.post('/bulk', auth, async (req, res) => {
+  const { department, orders } = req.body;
+  if (!department) return res.status(400).json({ error: 'Department is required' });
+  if (!Array.isArray(orders) || !orders.length) return res.status(400).json({ error: 'No orders to import' });
+
+  const invalid = orders.filter(o => !o.so_number || !o.size || !o.delivery_type);
+  if (invalid.length) {
+    return res.status(400).json({
+      error: `Size and delivery type are required — missing for ${invalid.map(o => o.so_number || '(blank SO)').join(', ')}`,
+    });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const soNumbers = orders.map(o => String(o.so_number).trim().toUpperCase());
+    const existing = await client.query(
+      'SELECT so_number FROM orders WHERE department = $1 AND so_number = ANY($2)',
+      [department, soNumbers]
+    );
+    const skip = new Set(existing.rows.map(r => r.so_number));
+
+    // clock_timestamp() (not NOW(), which is frozen for the whole transaction)
+    // gives each order its own created_at, so lists keep the report's order.
+    const created = [];
+    const skipped = [];
+    for (const o of orders) {
+      const so = String(o.so_number).trim().toUpperCase();
+      if (skip.has(so)) { skipped.push(so); continue; }
+      skip.add(so);   // guards against the same SO twice in one upload
+
+      const result = o.picker_id
+        ? await client.query(
+            `INSERT INTO orders (so_number, size, delivery_type, department, picker_id, status, created_at)
+             VALUES ($1, $2, $3, $4, $5, 'ASSIGNED', clock_timestamp()) RETURNING *`,
+            [so, o.size, o.delivery_type, department, o.picker_id])
+        : await client.query(
+            `INSERT INTO orders (so_number, size, delivery_type, department, created_at)
+             VALUES ($1, $2, $3, $4, clock_timestamp()) RETURNING *`,
+            [so, o.size, o.delivery_type, department]);
+      created.push(result.rows[0]);
+    }
+
+    await client.query('COMMIT');
+    res.json({ created: created.length, skipped, orders: created });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
