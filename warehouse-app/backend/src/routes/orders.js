@@ -171,9 +171,10 @@ router.post('/upload/preview', auth, (req, res) => {
 
       // Flag orders that are already in the system for this department
       const existing = await pool.query(
-        `SELECT so_number, status, DATE(created_at) AS created_date
-           FROM orders
-          WHERE so_number = ANY($1) ${department ? 'AND department = $2' : ''}`,
+        `SELECT o.so_number, o.status, DATE(o.created_at) AS created_date, p.name AS picker_name
+           FROM orders o
+           LEFT JOIN pickers p ON p.id = o.picker_id
+          WHERE o.so_number = ANY($1) ${department ? 'AND o.department = $2' : ''}`,
         department ? [parsed.orders.map(o => o.so_number), department]
                    : [parsed.orders.map(o => o.so_number)]
       );
@@ -185,6 +186,7 @@ router.post('/upload/preview', auth, (req, res) => {
           ...o,
           already_exists: already.has(o.so_number),
           existing_status: already.get(o.so_number)?.status || null,
+          existing_picker: already.get(o.so_number)?.picker_name || null,
         })),
       });
     } catch (err) {
@@ -220,10 +222,11 @@ router.post('/bulk', auth, async (req, res) => {
     const skip = new Set(existing.rows.map(r => r.so_number));
 
     // clock_timestamp() (not NOW(), which is frozen for the whole transaction)
-    // gives each order its own created_at, so lists keep the report's order.
+    // gives each order its own created_at. Inserting in reverse means the newest
+    // upload sits on top of the Orders list (newest first) in the report's own order.
     const created = [];
     const skipped = [];
-    for (const o of orders) {
+    for (const o of [...orders].reverse()) {
       const so = String(o.so_number).trim().toUpperCase();
       if (skip.has(so)) { skipped.push(so); continue; }
       skip.add(so);   // guards against the same SO twice in one upload
@@ -241,6 +244,8 @@ router.post('/bulk', auth, async (req, res) => {
     }
 
     await client.query('COMMIT');
+    created.reverse();   // back to report order for the response
+    skipped.reverse();
     res.json({ created: created.length, skipped, orders: created });
   } catch (err) {
     await client.query('ROLLBACK');

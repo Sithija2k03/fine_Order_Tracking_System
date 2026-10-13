@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../../api/index';
 import UploadOrdersModal from './UploadOrdersModal';
@@ -74,6 +74,19 @@ export default function OrdersPage() {
   const [date, setDate]               = useState(today);
   const [selected, setSelected]       = useState<Set<string>>(new Set());
   const [bulkPicker, setBulkPicker]   = useState('');
+
+  // Orders added by the latest upload — kept on top with a NEW badge until assigned.
+  // Remembered per department + day, so it survives a page refresh.
+  const newKey = `newOrders:${dept}:${date}`;
+  const [newIds, setNewIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    try { setNewIds(new Set(JSON.parse(localStorage.getItem(newKey) || '[]'))); }
+    catch { setNewIds(new Set()); }
+  }, [newKey]);
+  const markNew = (ids: string[]) => {
+    setNewIds(new Set(ids));
+    try { localStorage.setItem(newKey, JSON.stringify(ids)); } catch { /* storage unavailable */ }
+  };
 
   const [soNumber, setSoNumber]         = useState('');
   const [size, setSize]                 = useState('');
@@ -201,8 +214,13 @@ export default function OrdersPage() {
   const filtered = useMemo(() => {
     const f = FILTERS.find(x => x.key === filter)!;
     const q = search.trim().toLowerCase();
-    return orders.filter(o => f.test(o) && (!q || o.so_number.toLowerCase().includes(q)));
-  }, [orders, filter, search]);
+    const list = orders.filter(o => f.test(o) && (!q || o.so_number.toLowerCase().includes(q)));
+    // Unassigned orders from the latest upload always go first
+    const isFresh = (o: Order) => newIds.has(String(o.id)) && o.status === 'UNASSIGNED';
+    return [...list.filter(isFresh), ...list.filter(o => !isFresh(o))];
+  }, [orders, filter, search, newIds]);
+  const isNew = (o: Order) => newIds.has(String(o.id)) && o.status === 'UNASSIGNED';
+  const freshCount = orders.filter(isNew).length;
 
   const selectableVisible = filtered.filter(o => ASSIGNABLE.includes(o.status));
   const allVisibleSelected = selectableVisible.length > 0 && selectableVisible.every(o => selected.has(o.id));
@@ -308,8 +326,18 @@ export default function OrdersPage() {
             department={dept}
             pickers={pickers}
             onClose={() => setShowUpload(false)}
-            onImported={(msg) => {
+            onImported={(msg, createdIds) => {
               setShowUpload(false);
+              // Only flag NEW when this upload adds to orders already there (e.g. the 12 pm
+              // report on top of the 8 am one) — the first upload of the day is all new anyway.
+              const hadOrdersToday = date === today && orders.length > 0;
+              if (createdIds.length && (hadOrdersToday || /already existed/.test(msg))) {
+                const key = `newOrders:${dept}:${today}`;
+                try { localStorage.setItem(key, JSON.stringify(createdIds)); } catch { /* ignore */ }
+                if (date === today) markNew(createdIds);
+                setFilter('all'); setSearch('');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }
               if (date !== today) setDate(today);   // imported orders are created today
               else ordersLive.refresh();
               toast(msg);
@@ -371,6 +399,17 @@ export default function OrdersPage() {
           </div>
         )}
 
+        {freshCount > 0 && (
+          <div className="bg-green-600/90 text-white rounded-2xl px-4 py-3 mb-3 flex items-center gap-3">
+            <span className="flex-1 text-sm font-semibold">🆕 {freshCount} new order{freshCount === 1 ? '' : 's'} from the latest upload — shown on top</span>
+            <button onClick={() => setSelected(new Set(orders.filter(isNew).map(o => o.id)))}
+              className="shrink-0 bg-white text-green-700 font-bold px-3 py-2 rounded-xl text-xs active:scale-95">
+              Select new
+            </button>
+            <button onClick={() => markNew([])} aria-label="Dismiss" className="shrink-0 text-white/80 px-1 text-lg">✕</button>
+          </div>
+        )}
+
         {/* Search + select all */}
         <div className="mb-3 flex flex-wrap gap-2 items-center">
           <input type="search" value={search} onChange={e => setSearch(e.target.value)}
@@ -428,7 +467,10 @@ export default function OrdersPage() {
                         <input type="checkbox" checked={isSel} onChange={() => toggle(o.id)} className="w-4 h-4 accent-blue-600" />
                       )}
                     </td>
-                    <td className="px-4 py-3 font-bold text-blue-900">{o.so_number}</td>
+                    <td className="px-4 py-3 font-bold text-blue-900 whitespace-nowrap">
+                      {o.so_number}
+                      {isNew(o) && <span className="ml-2 bg-green-500 text-white px-1.5 py-0.5 rounded text-[10px] font-bold">NEW</span>}
+                    </td>
                     <td className="px-4 py-3">
                       <span className={`px-2 py-1 rounded-lg text-xs font-bold ${STATUS_COLORS[o.status] || ''}`}>{o.status}</span>
                     </td>
@@ -508,8 +550,9 @@ export default function OrdersPage() {
                   </button>
                 )}
                 <div className="flex-1 min-w-0" onClick={() => assignable && toggle(o.id)}>
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-blue-900 text-base truncate">{o.so_number}</span>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="font-bold text-blue-900 text-base whitespace-nowrap">{o.so_number}</span>
+                    {isNew(o) && <span className="bg-green-500 text-white px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0">NEW</span>}
                     <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${STATUS_COLORS[o.status] || ''}`}>{o.status}</span>
                   </div>
                   <div className="text-xs text-blue-500 mt-0.5">
