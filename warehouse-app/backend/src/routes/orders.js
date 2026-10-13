@@ -475,16 +475,67 @@ router.patch('/:id/approve', auth, async (req, res) => {
 
 // ─── DELETE ──────────────────────────────────────────────────────────
 
+// Delete orders inside a transaction. Rows in other tables that point at these
+// orders (e.g. audit_logs) are removed first — otherwise Postgres refuses the
+// delete with a foreign-key error, which is why deleting used to fail.
+async function deleteOrders(client, ids, includeStarted) {
+  const allowed = await client.query(
+    `SELECT id::text AS id FROM orders
+      WHERE id::text = ANY($1::text[]) ${includeStarted ? '' : "AND status IN ('UNASSIGNED','ASSIGNED')"}`,
+    [ids.map(String)]
+  );
+  const okIds = allowed.rows.map(r => r.id);
+  if (!okIds.length) return { deleted: 0, skipped: ids.length };
+
+  const refs = await client.query(
+    `SELECT c.conrelid::regclass::text AS tbl, quote_ident(a.attname) AS col
+       FROM pg_constraint c
+       JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+      WHERE c.contype = 'f' AND c.confrelid = 'orders'::regclass`
+  );
+  for (const r of refs.rows) {
+    await client.query(`DELETE FROM ${r.tbl} WHERE ${r.col}::text = ANY($1::text[])`, [okIds]);
+  }
+  const del = await client.query('DELETE FROM orders WHERE id::text = ANY($1::text[])', [okIds]);
+  return { deleted: del.rowCount, skipped: ids.length - del.rowCount };
+}
+
+async function runDelete(ids, includeStarted) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await deleteOrders(client, ids, includeStarted);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// Bulk delete. Body: { order_ids: [...], include_started?: boolean }
+// Without include_started only UNASSIGNED / ASSIGNED orders are deleted.
+router.post('/bulk-delete', auth, async (req, res) => {
+  const { order_ids, include_started } = req.body;
+  if (!Array.isArray(order_ids) || !order_ids.length) return res.status(400).json({ error: 'No orders selected' });
+  try {
+    res.json(await runDelete(order_ids, !!include_started));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete one order (not yet started)
 router.delete('/:id', auth, async (req, res) => {
   try {
-    const check = await pool.query(
-      'SELECT status FROM orders WHERE id = $1', [req.params.id]
-    );
+    const check = await pool.query('SELECT status FROM orders WHERE id = $1', [req.params.id]);
     if (!check.rows[0]) return res.status(404).json({ error: 'Order not found' });
     if (!['UNASSIGNED', 'ASSIGNED'].includes(check.rows[0].status)) {
       return res.status(400).json({ error: 'Cannot delete order that has started' });
     }
-    await pool.query('DELETE FROM orders WHERE id = $1', [req.params.id]);
+    await runDelete([req.params.id], false);
     res.json({ message: 'Order deleted' });
   } catch (err) {
     res.status(500).json({ error: err.message });

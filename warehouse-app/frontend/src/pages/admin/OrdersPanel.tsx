@@ -94,6 +94,11 @@ export default function OrdersPage() {
   const [showUpload, setShowUpload]   = useState(false);
   const [date, setDate]               = useState(today);
   const [selected, setSelected]       = useState<Set<string>>(new Set());
+  // In-app confirmation (browser confirm() pop-ups can be blocked on phones)
+  const [confirmBox, setConfirmBox]   = useState<null | {
+    title: string; body: ReactNode; confirmLabel: string; danger?: boolean; onConfirm: () => void;
+  }>(null);
+  const [deleting, setDeleting]       = useState(false);
   const [bulkPicker, setBulkPicker]   = useState('');
 
   // Orders added by the latest upload — kept on top with a NEW badge until assigned.
@@ -163,8 +168,9 @@ export default function OrdersPage() {
 
   // ── Assign many orders at once ──
   const assignSelected = async () => {
-    const ids = [...selected];
-    if (!bulkPicker || !ids.length) return;
+    const ids = orders.filter(o => selected.has(o.id) && ASSIGNABLE.includes(o.status)).map(o => o.id);
+    if (!bulkPicker) return;
+    if (!ids.length) { toast('❌ None of the selected orders can be assigned (already started)'); return; }
     const pid = bulkPicker;
     const name = pickerName(pid);
     const snapshot = orders.filter(o => ids.includes(o.id));
@@ -182,32 +188,78 @@ export default function OrdersPage() {
     }
   };
 
-  const deleteOrder = async (order: Order) => {
-    if (!ASSIGNABLE.includes(order.status)) {
-      toast('❌ Cannot delete an order that has started picking');
-      return;
-    }
-    if (!confirm(`Delete ${order.so_number}?`)) return;
-    ordersLive.mutate(list => list.filter(o => o.id !== order.id));
+  // ── Delete (one or many) ──
+  const removeOrders = async (ids: string[], includeStarted: boolean) => {
+    const snapshot = orders;
+    setDeleting(true);
+    ordersLive.mutate(list => list.filter(o => !ids.includes(o.id)));
+    setSelected(new Set());
     try {
-      await api.delete(`/orders/${order.id}`);
-    } catch {
-      toast('❌ Failed to delete order');
+      const res = await api.post('/orders/bulk-delete', { order_ids: ids, include_started: includeStarted });
+      const { deleted, skipped } = res.data;
+      toast(`🗑 ${deleted} order${deleted === 1 ? '' : 's'} deleted` + (skipped ? ` · ${skipped} skipped` : ''));
+    } catch (err: any) {
+      ordersLive.mutate(() => snapshot);
+      toast(`❌ Delete failed: ${err.response?.data?.error || err.message || 'please try again'}`, { ms: 7000 });
+    } finally {
+      setDeleting(false);
+      setConfirmBox(null);
       ordersLive.refresh();
     }
   };
 
-  const approveOrder = async (order: Order) => {
+  const deleteOrder = (order: Order) => {
+    setConfirmBox({
+      title: `Delete ${order.so_number}?`,
+      body: 'This order will be removed from the list.',
+      confirmLabel: 'Delete',
+      danger: true,
+      onConfirm: () => removeOrders([order.id], !ASSIGNABLE.includes(order.status)),
+    });
+  };
+
+  const deleteSelected = () => {
+    const chosen = orders.filter(o => selected.has(o.id));
+    if (!chosen.length) return;
+    const started = chosen.filter(o => !ASSIGNABLE.includes(o.status)).length;
+    const everything = chosen.length === orders.length;
+    setConfirmBox({
+      title: everything ? `Delete ALL ${chosen.length} orders?` : `Delete ${chosen.length} order${chosen.length === 1 ? '' : 's'}?`,
+      body: (
+        <>
+          {everything && <p>Every order for {date === today ? 'today' : date} in this department will be removed.</p>}
+          {started > 0 && (
+            <p className="mt-2 bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2">
+              ⚠ {started} of these {started === 1 ? 'has' : 'have'} already started picking/checking — their timing records will be lost.
+            </p>
+          )}
+          <p className="mt-2">This can't be undone.</p>
+        </>
+      ),
+      confirmLabel: `Delete ${chosen.length}`,
+      danger: true,
+      onConfirm: () => removeOrders(chosen.map(o => o.id), true),
+    });
+  };
+
+  const approveOrder = (order: Order) => {
     if (order.approved) return;
-    if (!confirm(`Approve ${order.so_number}?`)) return;
-    patchOrders([order.id], { approved: true });
-    try {
-      await api.patch(`/orders/${order.id}/approve`, {});
-      ordersLive.refresh();
-    } catch (err: any) {
-      patchOrders([order.id], { approved: false });
-      toast(`❌ ${err.response?.data?.error || 'Failed to approve'}`);
-    }
+    setConfirmBox({
+      title: `Approve ${order.so_number}?`,
+      body: 'Mark this order as approved.',
+      confirmLabel: '✅ Approve',
+      onConfirm: async () => {
+        setConfirmBox(null);
+        patchOrders([order.id], { approved: true });
+        try {
+          await api.patch(`/orders/${order.id}/approve`, {});
+          ordersLive.refresh();
+        } catch (err: any) {
+          patchOrders([order.id], { approved: false });
+          toast(`❌ ${err.response?.data?.error || 'Failed to approve'}`);
+        }
+      },
+    });
   };
 
   const exportOrders = async () => {
@@ -259,7 +311,7 @@ export default function OrdersPage() {
   const isNew = (o: Order) => newIds.has(String(o.id)) && o.status === 'UNASSIGNED';
   const freshCount = orders.filter(isNew).length;
 
-  const selectableVisible = filtered.filter(o => ASSIGNABLE.includes(o.status));
+  const selectableVisible = filtered;
   const allVisibleSelected = selectableVisible.length > 0 && selectableVisible.every(o => selected.has(o.id));
 
   const toggle = (id: string) => setSelected(prev => {
@@ -474,7 +526,7 @@ export default function OrdersPage() {
           {selectableVisible.length > 0 && (
             <button onClick={toggleAllVisible}
               className="bg-blue-800 hover:bg-blue-700 active:scale-95 text-blue-100 font-semibold px-4 py-3 rounded-xl text-sm transition-all">
-              {allVisibleSelected ? '☐ Clear selection' : `☑ Select ${selectableVisible.length} to assign`}
+              {allVisibleSelected ? `☐ Clear selection (${selectableVisible.length})` : `☑ Select all (${selectableVisible.length})`}
             </button>
           )}
         </div>
@@ -494,7 +546,7 @@ export default function OrdersPage() {
                 <tr className="bg-blue-600 text-white">
                   <th className="pl-4 py-3 w-8">
                     <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible}
-                      disabled={!selectableVisible.length} className="w-4 h-4 accent-blue-300" title="Select all assignable" />
+                      disabled={!selectableVisible.length} className="w-4 h-4 accent-blue-300" title="Select all" />
                   </th>
                   <th className="px-4 py-3 text-left font-semibold">SO #</th>
                   <th className="px-4 py-3 text-left font-semibold">Status</th>
@@ -519,9 +571,7 @@ export default function OrdersPage() {
                   return (
                   <tr key={o.id} className={isSel ? 'bg-blue-100' : i % 2 === 0 ? 'bg-white' : 'bg-blue-50'}>
                     <td className="pl-4 py-3">
-                      {assignable && (
-                        <input type="checkbox" checked={isSel} onChange={() => toggle(o.id)} className="w-4 h-4 accent-blue-600" />
-                      )}
+                      <input type="checkbox" checked={isSel} onChange={() => toggle(o.id)} className="w-4 h-4 accent-blue-600" />
                     </td>
                     <td className="px-4 py-3 font-bold text-blue-900 whitespace-nowrap">
                       {o.so_number}
@@ -602,14 +652,12 @@ export default function OrdersPage() {
             return (
             <div key={o.id} className={`bg-white rounded-2xl p-3 transition-all ${isSel ? 'ring-4 ring-blue-400' : ''}`}>
               <div className="flex items-center gap-3">
-                {assignable && (
-                  <button onClick={() => toggle(o.id)} aria-label="Select order"
-                    className={`w-8 h-8 shrink-0 rounded-lg border-2 flex items-center justify-center text-sm font-bold
-                      ${isSel ? 'bg-blue-600 border-blue-600 text-white' : 'border-blue-200 text-transparent'}`}>
-                    ✓
-                  </button>
-                )}
-                <div className="flex-1 min-w-0" onClick={() => assignable && toggle(o.id)}>
+                <button onClick={() => toggle(o.id)} aria-label="Select order"
+                  className={`w-8 h-8 shrink-0 rounded-lg border-2 flex items-center justify-center text-sm font-bold
+                    ${isSel ? 'bg-blue-600 border-blue-600 text-white' : 'border-blue-200 text-transparent'}`}>
+                  ✓
+                </button>
+                <div className="flex-1 min-w-0" onClick={() => toggle(o.id)}>
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span className="font-bold text-blue-900 text-base whitespace-nowrap">{o.so_number}</span>
                     {isNew(o) && <span className="bg-green-500 text-white px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0">NEW</span>}
@@ -668,7 +716,7 @@ export default function OrdersPage() {
         </div>
         )}
 
-        {/* Bulk assign bar */}
+        {/* Bulk action bar: assign or delete the selected orders */}
         {selected.size > 0 && (
           <div className="fixed inset-x-0 bottom-16 z-40 px-3 pb-2 print:hidden">
             <div className="max-w-2xl mx-auto bg-white rounded-2xl shadow-2xl border border-blue-200 p-3 flex items-center gap-2">
@@ -683,14 +731,39 @@ export default function OrdersPage() {
                 {pickers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
               <button onClick={assignSelected} disabled={!bulkPicker}
-                className="shrink-0 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-200 active:scale-95 text-white font-bold px-4 py-2.5 rounded-xl text-sm transition-all">
+                className="shrink-0 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-200 active:scale-95 text-white font-bold px-3 py-2.5 rounded-xl text-sm transition-all">
                 Assign
+              </button>
+              <button onClick={deleteSelected} disabled={deleting} aria-label="Delete selected" title="Delete selected"
+                className="shrink-0 bg-red-600 hover:bg-red-700 disabled:bg-red-300 active:scale-95 text-white p-2.5 rounded-xl transition-all">
+                <TrashIcon size={18} />
               </button>
             </div>
           </div>
         )}
 
       </div>
+
+      {confirmBox && (
+        <div className="fixed inset-0 z-[70] bg-blue-950/80 flex items-end sm:items-center justify-center p-3 print:hidden"
+          onClick={() => !deleting && setConfirmBox(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-sm p-5 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <h3 className={`text-lg font-bold ${confirmBox.danger ? 'text-red-700' : 'text-blue-900'}`}>{confirmBox.title}</h3>
+            <div className="text-sm text-blue-700 mt-2">{confirmBox.body}</div>
+            <div className="flex gap-2 mt-5">
+              <button onClick={() => setConfirmBox(null)} disabled={deleting}
+                className="flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-semibold py-3.5 rounded-xl text-sm">
+                Cancel
+              </button>
+              <button onClick={confirmBox.onConfirm} disabled={deleting}
+                className={`flex-1 font-bold py-3.5 rounded-xl text-sm text-white active:scale-95 transition-all
+                  ${confirmBox.danger ? 'bg-red-600 hover:bg-red-700 disabled:bg-red-300' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                {deleting ? 'Deleting…' : confirmBox.confirmLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
