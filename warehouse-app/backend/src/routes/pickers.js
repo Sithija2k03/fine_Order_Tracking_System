@@ -8,10 +8,20 @@ router.get('/', async (req, res) => {
   const { department } = req.query;
   if (!department) return res.status(400).json({ error: 'Department is required' });
   try {
-    const result = await pool.query(
-      'SELECT id, name, department FROM pickers WHERE active = true AND department = $1 ORDER BY name',
-      [department]
-    );
+    // ?counts=1 adds today's to-do / in-progress counts for each picker
+    const result = req.query.counts
+      ? await pool.query(
+          `SELECT p.id, p.name, p.department,
+                  COUNT(o.id) FILTER (WHERE o.status = 'ASSIGNED')::int AS assigned_count,
+                  COUNT(o.id) FILTER (WHERE o.status = 'PICKING')::int  AS picking_count
+             FROM pickers p
+             LEFT JOIN orders o ON o.picker_id = p.id AND DATE(o.created_at) = CURRENT_DATE
+            WHERE p.active = true AND p.department = $1
+            GROUP BY p.id ORDER BY p.name`,
+          [department])
+      : await pool.query(
+          'SELECT id, name, department FROM pickers WHERE active = true AND department = $1 ORDER BY name',
+          [department]);
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });

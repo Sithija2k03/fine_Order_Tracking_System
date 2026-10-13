@@ -11,6 +11,9 @@ import CheckerSelectPage from './pages/CheckerSelectPage';
 import CheckerDashboard from './pages/CheckerDashboard';
 import OrdersPage from './pages/admin/OrdersPanel'
 import ApprovedOrdersPage from './pages/admin/ApprovedOrdersPage';
+import SignOffPage from './pages/admin/SignOffPage';
+import BottomNav from './components/BottomNav';
+import { ToastProvider } from './components/Toast';
 
 function ProtectedRoute({ children }: { children: ReactElement }) {
   const { isAdmin } = useAuth();
@@ -20,7 +23,9 @@ function ProtectedRoute({ children }: { children: ReactElement }) {
 function App() {
   return (
     <AuthProvider>
+      <ToastProvider>
       <BrowserRouter>
+        <div className="pb-20 print:pb-0">
         <Routes>
           {/* Public */}
           <Route path="/" element={<RoleSelectPage />} />
@@ -35,10 +40,14 @@ function App() {
           <Route path="/admin/:department" element={<ProtectedRoute><AdminDashboard /></ProtectedRoute>} />
           <Route path="/admin/:department/orders" element={<ProtectedRoute><OrdersPage /></ProtectedRoute>} />
           <Route path="/admin/:department/approved" element={<ProtectedRoute><ApprovedOrdersPage /></ProtectedRoute>} />
+          <Route path="/admin/:department/signoff" element={<ProtectedRoute><SignOffPage /></ProtectedRoute>} />
 
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
+        </div>
+        <BottomNav />
       </BrowserRouter>
+      </ToastProvider>
     </AuthProvider>
   );
 }

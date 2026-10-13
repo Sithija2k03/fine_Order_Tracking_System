@@ -17,10 +17,7 @@ api.interceptors.request.use((config) => {
 
 // Log responses for debugging
 api.interceptors.response.use(
-  (response) => {
-    console.log('API Response:', response.config.url, response.data);
-    return response;
-  },
+  (response) => response,   // (success logging removed — it slowed phones with large payloads)
   (error) => {
     console.error('API Error:', error.config?.url, error.response?.data);
     return Promise.reject(error);

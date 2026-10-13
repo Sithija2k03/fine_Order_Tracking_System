@@ -1,6 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import api from '../api/index';
+import { useLive } from '../lib/useLive';
+import { deptLabel } from '../lib/dept';
+import { useToast } from '../components/Toast';
+import PersonSwitcher from '../components/PersonSwitcher';
 
 interface Order {
   id: string;
@@ -16,47 +20,32 @@ export default function PickerDashboard() {
   const dept = searchParams.get('dept') || 'machinery';
   const navigate = useNavigate();
 
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [pickerName, setPickerName] = useState('');
-  const [message, setMessage] = useState('');
-  const [loading, setLoading] = useState(false);
+  const toast = useToast();
 
-  useEffect(() => { fetchData(); }, [id]);
+  // Cached + auto-refreshing every 10 s, so new assignments appear on their own
+  const live = useLive<{ pickerName: string; orders: Order[] }>(`/pickers/${id}/orders`, 10000);
+  const orders = live.data?.orders ?? [];
+  const pickerName = live.data?.pickerName ?? '';
+  const [busy, setBusy] = useState<Set<string>>(new Set());
 
-  const fetchData = async () => {
+  // Status changes show instantly; the server call runs behind it
+  const act = async (orderId: string, path: string, next: string, prev: string, label: string) => {
+    if (busy.has(orderId)) return;
+    setBusy(b => new Set(b).add(orderId));
+    live.mutate(d => ({ ...d, orders: d.orders.map(o => (o.id === orderId ? { ...o, status: next } : o)) }));
     try {
-      const res = await api.get(`/pickers/${id}/orders`);
-      setPickerName(res.data.pickerName);
-      setOrders(res.data.orders);
-    } catch (err) { console.error(err); }
-  };
-
-  const showMsg = (msg: string) => {
-    setMessage(msg);
-    setTimeout(() => setMessage(''), 3000);
-  };
-
-  const startPicking = async (orderId: string) => {
-    setLoading(true);
-    try {
-      await api.patch(`/orders/${orderId}/start-picking`, { picker_id: id });
-      showMsg('✅ Picking started!');
-      fetchData();
+      await api.patch(`/orders/${orderId}/${path}`, { picker_id: id });
+      toast(label);
     } catch (err: any) {
-      showMsg(`❌ ${err.response?.data?.error || 'Failed to start'}`);
-    } finally { setLoading(false); }
+      live.mutate(d => ({ ...d, orders: d.orders.map(o => (o.id === orderId ? { ...o, status: prev } : o)) }));
+      toast(`❌ ${err.response?.data?.error || 'Failed — please try again'}`);
+    } finally {
+      setBusy(b => { const n = new Set(b); n.delete(orderId); return n; });
+      live.refresh();
+    }
   };
-
-  const endPicking = async (orderId: string) => {
-    setLoading(true);
-    try {
-      await api.patch(`/orders/${orderId}/end-picking`, { picker_id: id });
-      showMsg('✅ Picking completed!');
-      fetchData();
-    } catch (err: any) {
-      showMsg(`❌ ${err.response?.data?.error || 'Failed to end'}`);
-    } finally { setLoading(false); }
-  };
+  const startPicking = (orderId: string) => act(orderId, 'start-picking', 'PICKING', 'ASSIGNED', '🚀 Picking started');
+  const endPicking   = (orderId: string) => act(orderId, 'end-picking', 'PICKED', 'PICKING', '✅ Picking completed');
 
   const assigned = orders.filter(o => o.status === 'ASSIGNED');
   const picking  = orders.filter(o => o.status === 'PICKING');
@@ -81,25 +70,27 @@ export default function PickerDashboard() {
     <div className="min-h-screen bg-blue-950 p-4 md:p-6">
       <div className="max-w-2xl mx-auto">
 
+        <PersonSwitcher role="picker" dept={dept} currentId={id} />
+
         {/* Header */}
         <div className="bg-blue-900 rounded-2xl p-4 md:p-6 mb-6">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-blue-300 text-sm">Picker Dashboard</p>
               <h1 className="text-2xl md:text-3xl font-bold text-white mt-1">
-                👤 {pickerName}
+                👤 {pickerName || '…'}
               </h1>
-              <p className="text-blue-400 text-sm mt-1 capitalize">{dept} Department</p>
+              <p className="text-blue-400 text-sm mt-1">{deptLabel(dept)}</p>
             </div>
             <div className="text-right">
               <button
-                onClick={fetchData}
+                onClick={live.refresh}
                 className="bg-blue-700 hover:bg-blue-600 active:scale-95 text-white font-bold w-12 h-12 rounded-xl text-xl transition-all mb-2 block ml-auto"
               >
                 ↻
               </button>
               <button
-                onClick={() => navigate(`/pickers`)}
+                onClick={() => navigate(`/pickers?dept=${dept}`)}
                 className="bg-blue-800 hover:bg-blue-700 active:scale-95 text-blue-200 text-sm font-semibold px-3 py-2 rounded-xl transition-all"
               >
                 ← Back
@@ -124,11 +115,8 @@ export default function PickerDashboard() {
           </div>
         </div>
 
-        {/* Message */}
-        {message && (
-          <div className="bg-blue-100 text-blue-900 px-4 py-3 rounded-xl mb-4 font-medium text-center">
-            {message}
-          </div>
+        {live.error && (
+          <div className="bg-red-600/90 text-white px-4 py-3 rounded-xl mb-4 text-sm font-semibold text-center">⚠ {live.error}</div>
         )}
 
         {/* Currently Picking */}
@@ -147,7 +135,7 @@ export default function PickerDashboard() {
                   </div>
                   <button
                     onClick={() => endPicking(o.id)}
-                    disabled={loading}
+                    disabled={busy.has(o.id)}
                     className="w-full bg-blue-600 hover:bg-blue-700 active:scale-95 disabled:bg-blue-300 text-white font-bold py-4 rounded-xl text-base transition-all"
                   >
                     ✅ Finish Picking
@@ -174,7 +162,7 @@ export default function PickerDashboard() {
                   </div>
                   <button
                     onClick={() => startPicking(o.id)}
-                    disabled={loading}
+                    disabled={busy.has(o.id)}
                     className="w-full bg-blue-600 hover:bg-blue-700 active:scale-95 disabled:bg-blue-300 text-white font-bold py-4 rounded-xl text-base transition-all"
                   >
                     🚀 Start Picking
@@ -208,7 +196,9 @@ export default function PickerDashboard() {
         )}
 
         {/* No orders */}
-        {orders.length === 0 && (
+        {live.loading && <div className="h-32 rounded-2xl bg-blue-900/60 animate-pulse" />}
+
+        {!live.loading && orders.length === 0 && (
           <div className="bg-blue-900 rounded-2xl p-8 text-center">
             <div className="text-5xl mb-3">⏳</div>
             <p className="text-blue-300 text-lg">No orders assigned yet</p>

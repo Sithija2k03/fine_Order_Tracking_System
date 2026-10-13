@@ -1,3 +1,18 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+/* Page background behind the bottom bar padding */
+html, body { background-color: #172554; }
+
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(8px) scale(.98); }
+  to   { opacity: 1; transform: none; }
+}
+
+@media print {
+  html, body { background: #fff !important; }
+}
+
+/* Horizontal scrollers without a visible scrollbar (quick switch strip) */
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }

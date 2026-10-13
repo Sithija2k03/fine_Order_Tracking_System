@@ -1,6 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import api from '../api/index';
+import { useLive } from '../lib/useLive';
+import { deptLabel } from '../lib/dept';
+import { useToast } from '../components/Toast';
+import PersonSwitcher from '../components/PersonSwitcher';
 
 interface Order {
   id: string;
@@ -15,6 +19,16 @@ interface Order {
   checker2_id?: string;
   checker_id?: string;
 }
+
+interface CheckerData {
+  checkerName: string;
+  availableOrders: Order[];
+  needSecondChecker: Order[];
+  myOrders: Order[];
+  myOrdersAsChecker2: Order[];
+  doneOrders: Order[];
+}
+type ListKey = Exclude<keyof CheckerData, 'checkerName'>;
 
 // ── Confirmation Modal ──────────────────────────────────────────────
 function Modal({
@@ -64,43 +78,41 @@ export default function CheckerDashboard() {
   const dept = searchParams.get('dept') || 'machinery';
   const navigate = useNavigate();
 
-  const [availableOrders, setAvailableOrders] = useState<Order[]>([]);
-  const [needSecondChecker, setNeedSecondChecker] = useState<Order[]>([]);
-  const [myOrders, setMyOrders] = useState<Order[]>([]);
-  const [myOrdersAsChecker2, setMyOrdersAsChecker2] = useState<Order[]>([]);
-  const [doneOrders, setDoneOrders] = useState<Order[]>([]);
-  const [checkerName, setCheckerName] = useState('');
-  const [message, setMessage] = useState('');
-  const [loading, setLoading] = useState(false);
+  const toast = useToast();
+
+  // Cached + refreshed every 8 s while the screen is visible
+  const live = useLive<CheckerData>(`/checkers/${id}/orders`, 8000);
+  const d = live.data;
+  const availableOrders    = d?.availableOrders    ?? [];
+  const needSecondChecker  = d?.needSecondChecker  ?? [];
+  const myOrders           = d?.myOrders           ?? [];
+  const myOrdersAsChecker2 = d?.myOrdersAsChecker2 ?? [];
+  const doneOrders         = d?.doneOrders         ?? [];
+  const checkerName        = d?.checkerName        ?? '';
+  const [busy, setBusy] = useState<Set<string>>(new Set());
 
   // Modal state
   const [modalOrder, setModalOrder] = useState<{ id: string; so_number: string } | null>(null);
 
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 10000);
-    return () => clearInterval(interval);
-  }, [id]);
-
-  const fetchData = async () => {
-  try {
-    const res = await api.get(`/checkers/${id}/orders`);
-    const data = res.data;
-    console.log('Checker API response:', data); // see exact keys returned
-    setCheckerName(data.checkerName || '');
-    setAvailableOrders(data.availableOrders || []);
-    setNeedSecondChecker(data.needSecondChecker || []);
-    setMyOrders(data.myOrders || []);
-    setMyOrdersAsChecker2(data.myOrdersAsChecker2 || []);
-    setDoneOrders(data.doneOrders || []);
-  } catch (err) {
-    console.error('fetchData error:', err);
-  }
-};
-
-  const showMsg = (msg: string) => {
-    setMessage(msg);
-    setTimeout(() => setMessage(''), 4000);
+  // Move an order between lists instantly, then save; on failure reload the truth
+  const act = async (orderId: string, from: ListKey, to: ListKey, patch: Partial<Order>,
+                     path: string, label: string) => {
+    if (busy.has(orderId)) return;
+    setBusy(b => new Set(b).add(orderId));
+    live.mutate(prev => {
+      const order = prev[from].find(o => o.id === orderId);
+      if (!order) return prev;
+      return { ...prev, [from]: prev[from].filter(o => o.id !== orderId), [to]: [{ ...order, ...patch }, ...prev[to]] };
+    });
+    try {
+      await api.patch(`/orders/${orderId}/${path}`, { checker_id: id });
+      toast(label);
+    } catch (err: any) {
+      toast(`❌ ${err.response?.data?.error || 'Failed — please try again'}`);
+    } finally {
+      setBusy(b => { const n = new Set(b); n.delete(orderId); return n; });
+      live.refresh();
+    }
   };
 
   // Checker clicks Start Checking → show modal
@@ -109,63 +121,27 @@ export default function CheckerDashboard() {
   };
 
   // Modal: No — just start normally
-  const handleModalNo = async (orderId: string) => {
+  const handleModalNo = (orderId: string) => {
     setModalOrder(null);
-    setLoading(true);
-    try {
-      await api.patch(`/orders/${orderId}/start-checking`, { checker_id: id });
-      showMsg('✅ Checking started!');
-      fetchData();
-    } catch (err: any) {
-      showMsg(`❌ ${err.response?.data?.error || 'Failed to start'}`);
-    } finally { setLoading(false); }
+    act(orderId, 'availableOrders', 'myOrders', { status: 'CHECKING', needs_second_checker: false },
+        'start-checking', '🔍 Checking started');
   };
 
   // Modal: Yes — flag order as needing second checker, then start
-  const handleModalYes = async (orderId: string) => {
+  const handleModalYes = (orderId: string) => {
     setModalOrder(null);
-    setLoading(true);
-    try {
-      await api.patch(`/orders/${orderId}/start-checking-with-second`, { checker_id: id });
-      showMsg('✅ Checking started! Order is now visible for a 2nd checker.');
-      fetchData();
-    } catch (err: any) {
-      showMsg(`❌ ${err.response?.data?.error || 'Failed to start'}`);
-    } finally { setLoading(false); }
+    act(orderId, 'availableOrders', 'myOrders', { status: 'CHECKING', needs_second_checker: true },
+        'start-checking-with-second', '🔍 Started — waiting for a 2nd checker');
   };
 
-  const endChecking = async (orderId: string) => {
-    setLoading(true);
-    try {
-      await api.patch(`/orders/${orderId}/end-checking`, { checker_id: id });
-      showMsg('✅ Order completed!');
-      fetchData();
-    } catch (err: any) {
-      showMsg(`❌ ${err.response?.data?.error || 'Failed to end'}`);
-    } finally { setLoading(false); }
-  };
+  const endChecking = (orderId: string) =>
+    act(orderId, 'myOrders', 'doneOrders', { status: 'DONE' }, 'end-checking', '✅ Order completed');
 
-  const startCheckingAsChecker2 = async (orderId: string) => {
-    setLoading(true);
-    try {
-      await api.patch(`/orders/${orderId}/start-checking-2`, { checker_id: id });
-      showMsg('✅ Joined as 2nd checker!');
-      fetchData();
-    } catch (err: any) {
-      showMsg(`❌ ${err.response?.data?.error || 'Failed to join'}`);
-    } finally { setLoading(false); }
-  };
+  const startCheckingAsChecker2 = (orderId: string) =>
+    act(orderId, 'needSecondChecker', 'myOrdersAsChecker2', {}, 'start-checking-2', '👥 Joined as 2nd checker');
 
-  const endCheckingAsChecker2 = async (orderId: string) => {
-    setLoading(true);
-    try {
-      await api.patch(`/orders/${orderId}/end-checking-2`, { checker_id: id });
-      showMsg('✅ Order completed!');
-      fetchData();
-    } catch (err: any) {
-      showMsg(`❌ ${err.response?.data?.error || 'Failed to end'}`);
-    } finally { setLoading(false); }
-  };
+  const endCheckingAsChecker2 = (orderId: string) =>
+    act(orderId, 'myOrdersAsChecker2', 'doneOrders', { status: 'DONE' }, 'end-checking-2', '✅ Order completed');
 
   const SizeTag = ({ size }: { size: string }) => (
     <span className={`px-2 py-1 rounded-lg text-xs font-bold
@@ -196,25 +172,27 @@ export default function CheckerDashboard() {
           />
         )}
 
+        <PersonSwitcher role="checker" dept={dept} currentId={id} />
+
         {/* Header */}
         <div className="bg-blue-900 rounded-2xl p-4 md:p-6 mb-6">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-blue-300 text-sm">Checker Dashboard</p>
               <h1 className="text-2xl md:text-3xl font-bold text-white mt-1">
-                👤 {checkerName}
+                👤 {checkerName || '…'}
               </h1>
-              <p className="text-blue-400 text-sm mt-1 capitalize">{dept} Department</p>
+              <p className="text-blue-400 text-sm mt-1">{deptLabel(dept)}</p>
             </div>
             <div className="flex flex-col gap-2">
               <button
-                onClick={fetchData}
+                onClick={live.refresh}
                 className="bg-blue-700 hover:bg-blue-600 active:scale-95 text-white font-bold w-12 h-12 rounded-xl text-xl transition-all"
               >
                 ↻
               </button>
               <button
-                onClick={() => navigate('/checkers')}
+                onClick={() => navigate(`/checkers?dept=${dept}`)}
                 className="bg-blue-800 hover:bg-blue-700 active:scale-95 text-blue-200 text-sm font-semibold px-3 py-2 rounded-xl transition-all"
               >
                 ← Back
@@ -243,11 +221,8 @@ export default function CheckerDashboard() {
           </div>
         </div>
 
-        {/* Message */}
-        {message && (
-          <div className="bg-blue-100 text-blue-900 px-4 py-3 rounded-xl mb-4 font-medium text-center">
-            {message}
-          </div>
+        {live.error && (
+          <div className="bg-red-600/90 text-white px-4 py-3 rounded-xl mb-4 text-sm font-semibold text-center">⚠ {live.error}</div>
         )}
 
         {/* ── Orders Needing 2nd Checker ── */}
@@ -282,7 +257,7 @@ export default function CheckerDashboard() {
                   </div>
                   <button
                     onClick={() => startCheckingAsChecker2(o.id)}
-                    disabled={loading}
+                    disabled={busy.has(o.id)}
                     className="w-full bg-purple-600 hover:bg-purple-700 active:scale-95 disabled:bg-purple-300 text-white font-bold py-4 rounded-xl text-base transition-all"
                   >
                     👥 Join as 2nd Checker
@@ -319,7 +294,7 @@ export default function CheckerDashboard() {
                   )}
                   <button
                     onClick={() => endChecking(o.id)}
-                    disabled={loading}
+                    disabled={busy.has(o.id)}
                     className="w-full mt-3 bg-blue-600 hover:bg-blue-700 active:scale-95 disabled:bg-blue-300 text-white font-bold py-4 rounded-xl text-base transition-all"
                   >
                     ✅ Finish Checking
@@ -352,7 +327,7 @@ export default function CheckerDashboard() {
                   </p>
                   <button
                     onClick={() => endCheckingAsChecker2(o.id)}
-                    disabled={loading}
+                    disabled={busy.has(o.id)}
                     className="w-full bg-purple-600 hover:bg-purple-700 active:scale-95 disabled:bg-purple-300 text-white font-bold py-4 rounded-xl text-base transition-all"
                   >
                     ✅ Finish Checking (2nd)
@@ -396,7 +371,7 @@ export default function CheckerDashboard() {
                   </p>
                   <button
                     onClick={() => handleStartChecking(o)}
-                    disabled={loading}
+                    disabled={busy.has(o.id)}
                     className="w-full bg-blue-600 hover:bg-blue-700 active:scale-95 disabled:bg-blue-300 text-white font-bold py-4 rounded-xl text-base transition-all"
                   >
                     🔍 Start Checking

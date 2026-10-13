@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
+
 export default function DepartmentSelectPage() {
   const navigate = useNavigate();
   const { logout } = useAuth();
@@ -15,14 +16,14 @@ export default function DepartmentSelectPage() {
 
       <div className="flex flex-col gap-4 w-full max-w-xs md:max-w-sm lg:max-w-md">
         <button
-          onClick={() => navigate('/admin/machinery')}
+          onClick={() => navigate('/admin/machinery/orders')}
           className="bg-blue-600 hover:bg-blue-500 active:scale-95 text-white font-bold py-6 md:py-8 rounded-2xl text-xl md:text-2xl shadow-lg transition-all"
         >
           🔧 Machinery
         </button>
 
         <button
-          onClick={() => navigate('/admin/assembly')}
+          onClick={() => navigate('/admin/assembly/orders')}
           className="bg-blue-800 hover:bg-blue-700 active:scale-95 text-white font-bold py-6 md:py-8 rounded-2xl text-xl md:text-2xl shadow-lg transition-all"
         >
           🔩 Accessories

@@ -18,12 +18,14 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
-app.use(express.json());
+// 1 MB allows signature images; normal requests are far smaller
+app.use(express.json({ limit: '1mb' }));
 
 app.use('/api/auth',     require('./routes/auth'));
 app.use('/api/orders',   require('./routes/orders'));
 app.use('/api/pickers',  require('./routes/pickers'));
 app.use('/api/checkers', require('./routes/checkers'));
+app.use('/api/signoffs', require('./routes/signoffs'));
 
 app.get('/api/health', (req, res) => res.json({
   status: '✅ API is running',
@@ -42,6 +44,9 @@ cron.schedule('*/10 * * * *', () => {
     console.log('⚠️  Keep-alive ping failed:', err.message);
   });
 });
+
+// Create new tables/indexes if missing (safe to run on every start)
+require('./config/migrate')();
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));

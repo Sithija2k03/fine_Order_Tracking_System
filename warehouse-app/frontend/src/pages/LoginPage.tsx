@@ -2,6 +2,9 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/index';
+import { getRememberedDept, isDept } from '../lib/dept';
+
+const adminHome = () => { const d = getRememberedDept(); return isDept(d) ? `/admin/${d}/orders` : '/admin'; };
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -34,7 +37,7 @@ export default function LoginPage() {
     console.log('Token saved, verifying:', localStorage.getItem('token'));
     
     login(res.data.token, res.data.username);
-    navigate('/admin');
+    navigate(adminHome());   // straight to today's orders for the last-used department
   } catch (err) {
     console.error('Login failed:', err);
     setError('Invalid username or password');

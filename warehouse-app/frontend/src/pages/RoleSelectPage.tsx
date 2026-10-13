@@ -1,5 +1,8 @@
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { getRememberedDept, isDept } from '../lib/dept';
+
+const adminHome = () => { const d = getRememberedDept(); return isDept(d) ? `/admin/${d}/orders` : '/admin'; };
 
 export default function RoleSelectPage() {
   const navigate = useNavigate();
@@ -31,7 +34,7 @@ export default function RoleSelectPage() {
         {isAdmin ? (
           <div className="flex gap-3 mt-2">
             <button
-              onClick={() => navigate('/admin')}
+              onClick={() => navigate(adminHome())}
               className="flex-1 bg-white hover:bg-blue-50 active:scale-95 text-blue-900 font-bold py-4 rounded-2xl text-base md:text-lg transition-all"
             >
               ⚙️ Admin Panel

@@ -256,6 +256,25 @@ router.post('/bulk', auth, async (req, res) => {
 //      /:id/start-checking-2            before  /:id/start-checking
 //      /:id/end-checking-2              before  /:id/end-checking
 
+// Assign many orders to one picker in a single request (multi-select on the Orders page)
+// Body: { order_ids: [...], picker_id }
+router.patch('/assign-bulk', auth, async (req, res) => {
+  const { order_ids, picker_id } = req.body;
+  if (!picker_id) return res.status(400).json({ error: 'Choose a picker' });
+  if (!Array.isArray(order_ids) || !order_ids.length) return res.status(400).json({ error: 'No orders selected' });
+  try {
+    const result = await pool.query(
+      `UPDATE orders SET picker_id = $1, status = 'ASSIGNED', updated_at = NOW()
+        WHERE id::text = ANY($2::text[]) AND status IN ('UNASSIGNED','ASSIGNED')
+        RETURNING id`,
+      [picker_id, order_ids.map(String)]
+    );
+    res.json({ updated: result.rowCount, skipped: order_ids.length - result.rowCount });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Assign picker
 router.patch('/:id/assign', auth, async (req, res) => {
   const { picker_id } = req.body;

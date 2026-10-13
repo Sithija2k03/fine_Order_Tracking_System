@@ -44,13 +44,12 @@ router.delete('/:id', auth, async (req, res) => {
 // Get checker dashboard data
 router.get('/:id/orders', async (req, res) => {
   try {
-    const checker = await pool.query(
+    const q_checker = pool.query(
       'SELECT name FROM checkers WHERE id = $1', [req.params.id]
     );
-    if (!checker.rows[0]) return res.status(404).json({ error: 'Checker not found' });
 
     // Orders ready to be checked (PICKED status)
-    const available = await pool.query(
+    const q_available = pool.query(
       `SELECT o.id, o.so_number, o.status, o.size, o.delivery_type,
               o.needs_second_checker, o.checker_id,
               p.name AS picker_name,
@@ -65,7 +64,7 @@ router.get('/:id/orders', async (req, res) => {
     );
 
     // Orders needing second checker (PICKED, needs_second_checker=true, no checker2 yet)
-    const needSecond = await pool.query(
+    const q_needSecond = pool.query(
       `SELECT o.id, o.so_number, o.status, o.size, o.delivery_type,
               o.needs_second_checker, o.checker_id,
               p.name AS picker_name,
@@ -83,7 +82,7 @@ router.get('/:id/orders', async (req, res) => {
     );
 
     // Orders this checker is currently checking (as checker 1)
-    const mine = await pool.query(
+    const q_mine = pool.query(
       `SELECT o.id, o.so_number, o.status, o.size, o.delivery_type,
               o.needs_second_checker, o.checker2_id,
               p.name AS picker_name,
@@ -97,7 +96,7 @@ router.get('/:id/orders', async (req, res) => {
     );
 
     // Orders this checker is checking as checker 2
-    const mineAsChecker2 = await pool.query(
+    const q_mineAsChecker2 = pool.query(
       `SELECT o.id, o.so_number, o.status, o.size, o.delivery_type,
               o.needs_second_checker,
               p.name AS picker_name,
@@ -111,7 +110,7 @@ router.get('/:id/orders', async (req, res) => {
     );
 
     // Done orders
-    const done = await pool.query(
+    const q_done = pool.query(
       `SELECT o.id, o.so_number, o.status, o.size, o.delivery_type,
               p.name AS picker_name
        FROM orders o
@@ -122,6 +121,12 @@ router.get('/:id/orders', async (req, res) => {
        ORDER BY o.checker_end DESC`,
       [req.params.id]
     );
+
+    // All six queries run in parallel instead of one after another
+    const [checker, available, needSecond, mine, mineAsChecker2, done] = await Promise.all(
+      [q_checker, q_available, q_needSecond, q_mine, q_mineAsChecker2, q_done]
+    );
+    if (!checker.rows[0]) return res.status(404).json({ error: 'Checker not found' });
 
     res.json({
       checkerName: checker.rows[0].name,
