@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../../api/index';
 import UploadOrdersModal from './UploadOrdersModal';
@@ -57,6 +57,21 @@ const FILTERS = [
 ] as const;
 type FilterKey = typeof FILTERS[number]['key'];
 
+// Delivery types — high priority first. Pronto + Transport = "Priority".
+const DELIVERY_ORDER = ['Pronto', 'Transport', 'Guard-Room', 'Giving'];
+const PRIORITY = ['Pronto', 'Transport'];
+const DELIVERY_STYLE: Record<string, string> = {
+  'Pronto':     'bg-red-100 text-red-700 border-red-200',
+  'Transport':  'bg-purple-100 text-purple-700 border-purple-200',
+  'Guard-Room': 'bg-amber-100 text-amber-800 border-amber-200',
+  'Giving':     'bg-slate-100 text-slate-600 border-slate-200',
+};
+const deliveryStyle = (t: string) => DELIVERY_STYLE[t] || 'bg-blue-50 text-blue-600 border-blue-200';
+const DELIVERY_KEY = 'deliveryFilter';
+const loadDeliveryFilter = (): string[] => {
+  try { return JSON.parse(localStorage.getItem(DELIVERY_KEY) || '[]'); } catch { return []; }
+};
+
 export default function OrdersPage() {
   const { department } = useParams<{ department: string }>();
   const navigate = useNavigate();
@@ -68,6 +83,12 @@ export default function OrdersPage() {
 
   const [search, setSearch]           = useState('');
   const [filter, setFilter]           = useState<FilterKey>('all');
+  // Delivery types to show (empty = all). Remembered on this device.
+  const [delivery, setDeliveryState]  = useState<string[]>(loadDeliveryFilter);
+  const setDelivery = (v: string[]) => {
+    setDeliveryState(v);
+    try { localStorage.setItem(DELIVERY_KEY, JSON.stringify(v)); } catch { /* ignore */ }
+  };
   const [loading, setLoading]         = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [showUpload, setShowUpload]   = useState(false);
@@ -211,14 +232,30 @@ export default function OrdersPage() {
     }
   };
 
+  const byDelivery = useMemo(
+    () => (delivery.length ? orders.filter(o => delivery.includes(o.delivery_type)) : orders),
+    [orders, delivery]);
+
+  // Chip counts follow the status card that is selected (e.g. Unassigned)
+  const deliveryCounts = useMemo(() => {
+    const f = FILTERS.find(x => x.key === filter)!;
+    const counts = new Map<string, number>();
+    orders.filter(f.test).forEach(o => counts.set(o.delivery_type, (counts.get(o.delivery_type) || 0) + 1));
+    const types = [...new Set([...DELIVERY_ORDER.filter(t => counts.has(t)), ...counts.keys()])].filter(Boolean);
+    return { types, counts };
+  }, [orders, filter]);
+  const isPriority = delivery.length === PRIORITY.length && PRIORITY.every(t => delivery.includes(t));
+  const toggleDelivery = (t: string) =>
+    setDelivery(delivery.includes(t) ? delivery.filter(x => x !== t) : [...delivery, t]);
+
   const filtered = useMemo(() => {
     const f = FILTERS.find(x => x.key === filter)!;
     const q = search.trim().toLowerCase();
-    const list = orders.filter(o => f.test(o) && (!q || o.so_number.toLowerCase().includes(q)));
+    const list = byDelivery.filter(o => f.test(o) && (!q || o.so_number.toLowerCase().includes(q)));
     // Unassigned orders from the latest upload always go first
     const isFresh = (o: Order) => newIds.has(String(o.id)) && o.status === 'UNASSIGNED';
     return [...list.filter(isFresh), ...list.filter(o => !isFresh(o))];
-  }, [orders, filter, search, newIds]);
+  }, [byDelivery, filter, search, newIds]);
   const isNew = (o: Order) => newIds.has(String(o.id)) && o.status === 'UNASSIGNED';
   const freshCount = orders.filter(isNew).length;
 
@@ -313,7 +350,7 @@ export default function OrdersPage() {
                 className={`rounded-2xl p-3 md:p-4 text-center transition-all active:scale-95
                   ${isApproval ? 'bg-orange-900' : 'bg-blue-900'}
                   ${active ? 'ring-2 ring-blue-300' : 'hover:brightness-110'}`}>
-                <div className={`text-xl md:text-3xl font-bold ${f.color}`}>{orders.filter(f.test).length}</div>
+                <div className={`text-xl md:text-3xl font-bold ${f.color}`}>{byDelivery.filter(f.test).length}</div>
                 <div className={`text-[11px] md:text-xs mt-1 font-medium ${isApproval ? 'text-orange-400' : 'text-blue-300'}`}>{f.label}</div>
               </button>
             );
@@ -410,6 +447,25 @@ export default function OrdersPage() {
           </div>
         )}
 
+        {/* Delivery type filter */}
+        {deliveryCounts.types.length > 0 && (
+          <div className="-mx-4 md:mx-0 mb-3 overflow-x-auto no-scrollbar">
+            <div className="flex gap-2 px-4 md:px-0 w-max md:w-auto md:flex-wrap items-center">
+              <span className="text-blue-400 text-xs font-semibold mr-1 shrink-0">Delivery:</span>
+              <Chip active={!delivery.length} onClick={() => setDelivery([])}>All</Chip>
+              <Chip active={isPriority} onClick={() => setDelivery(isPriority ? [] : PRIORITY)} className="!border-orange-400">
+                ⚡ Priority
+                <Count n={PRIORITY.reduce((n, t) => n + (deliveryCounts.counts.get(t) || 0), 0)} active={isPriority} />
+              </Chip>
+              {deliveryCounts.types.map(t => (
+                <Chip key={t} active={delivery.includes(t)} onClick={() => toggleDelivery(t)}>
+                  {t}<Count n={deliveryCounts.counts.get(t) || 0} active={delivery.includes(t)} />
+                </Chip>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Search + select all */}
         <div className="mb-3 flex flex-wrap gap-2 items-center">
           <input type="search" value={search} onChange={e => setSearch(e.target.value)}
@@ -475,7 +531,11 @@ export default function OrdersPage() {
                       <span className={`px-2 py-1 rounded-lg text-xs font-bold ${STATUS_COLORS[o.status] || ''}`}>{o.status}</span>
                     </td>
                     <td className="px-4 py-3 text-blue-700 font-medium">{o.size || '—'}</td>
-                    <td className="px-4 py-3 text-blue-700">{o.delivery_type || '—'}</td>
+                    <td className="px-4 py-3">
+                      {o.delivery_type
+                        ? <span className={`px-2 py-0.5 rounded-md border text-xs font-semibold ${deliveryStyle(o.delivery_type)}`}>{o.delivery_type}</span>
+                        : '—'}
+                    </td>
                     <td className="px-4 py-3">
                       {assignable ? (
                         pickerSelect(o, "border border-blue-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-blue-500")
@@ -556,7 +616,10 @@ export default function OrdersPage() {
                     <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${STATUS_COLORS[o.status] || ''}`}>{o.status}</span>
                   </div>
                   <div className="text-xs text-blue-500 mt-0.5">
-                    {o.size || '—'} · {o.delivery_type || '—'}
+                    <span className="font-semibold">{o.size || '—'}</span>
+                    {o.delivery_type && (
+                      <span className={`ml-1.5 px-1.5 py-px rounded border text-[11px] font-semibold ${deliveryStyle(o.delivery_type)}`}>{o.delivery_type}</span>
+                    )}
                     {!assignable && o.picker_name && <> · 🧳 {o.picker_name}</>}
                   </div>
                 </div>
@@ -629,6 +692,25 @@ export default function OrdersPage() {
 
       </div>
     </div>
+  );
+}
+
+function Chip({ active, onClick, className = '', children }: {
+  active: boolean; onClick: () => void; className?: string; children: ReactNode;
+}) {
+  return (
+    <button onClick={onClick}
+      className={`shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full border text-sm font-semibold transition-all active:scale-95
+        ${active ? 'bg-white text-blue-900 border-white shadow' : 'bg-blue-900 text-blue-200 border-blue-700 hover:bg-blue-800'} ${className}`}>
+      {children}
+    </button>
+  );
+}
+
+function Count({ n, active }: { n: number; active: boolean }) {
+  return (
+    <span className={`min-w-5 h-5 px-1.5 inline-flex items-center justify-center rounded-full text-[11px] font-bold
+      ${active ? 'bg-blue-600 text-white' : 'bg-blue-700 text-blue-100'}`}>{n}</span>
   );
 }
 
