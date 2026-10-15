@@ -41,7 +41,7 @@ router.get('/:id/orders', async (req, res) => {
     const orders = await pool.query(
       `SELECT id, so_number, status, size, delivery_type
        FROM orders
-       WHERE picker_id = $1 AND DATE(created_at) = CURRENT_DATE
+       WHERE picker_id = $1 AND DATE(created_at) = CURRENT_DATE AND status <> 'CANCELLED'
        ORDER BY created_at DESC`,
       [req.params.id]
     );

@@ -29,6 +29,8 @@ interface Order {
   approved: boolean;
   approved_by_name: string;
   approved_at: string;
+  cancelled_at?: string | null;
+  cancelled_by?: string | null;
 }
 
 interface Picker { id: string; name: string; }
@@ -40,6 +42,7 @@ const STATUS_COLORS: Record<string, string> = {
   PICKED:     'bg-blue-300 text-blue-900',
   CHECKING:   'bg-indigo-100 text-indigo-700',
   DONE:       'bg-green-100 text-green-700',
+  CANCELLED:  'bg-red-100 text-red-700',
 };
 
 const ASSIGNABLE = ['UNASSIGNED', 'ASSIGNED'];
@@ -53,7 +56,7 @@ const FILTERS = [
   { key: 'progress',   label: 'In Progress',     color: 'text-yellow-300', test: (o: Order) => ['ASSIGNED', 'PICKING'].includes(o.status) },
   { key: 'picked',     label: 'Picked',          color: 'text-cyan-300',   test: (o: Order) => ['PICKED', 'CHECKING'].includes(o.status) },
   { key: 'done',       label: 'Done',            color: 'text-green-300',  test: (o: Order) => o.status === 'DONE' },
-  { key: 'approval',   label: 'Pending Approval', color: 'text-orange-300', test: (o: Order) => ['PICKED', 'DONE'].includes(o.status) && !o.approved },
+  { key: 'cancelled',  label: 'Cancelled',       color: 'text-red-300',    test: (o: Order) => o.status === 'CANCELLED' },
 ] as const;
 type FilterKey = typeof FILTERS[number]['key'];
 
@@ -242,6 +245,45 @@ export default function OrdersPage() {
     });
   };
 
+  // ── Cancel / restore ──
+  const setCancelled = async (ids: string[], cancel: boolean) => {
+    const snapshot = orders;
+    patchOrders(ids, cancel ? { status: 'CANCELLED', cancelled_by: 'you' } : {});
+    setSelected(new Set());
+    setConfirmBox(null);
+    try {
+      const res = await api.patch(cancel ? '/orders/cancel' : '/orders/restore', { order_ids: ids });
+      const n = cancel ? res.data.cancelled : res.data.restored;
+      toast(cancel ? `⛔ ${n} order${n === 1 ? '' : 's'} marked cancelled` : `↩ ${n} order${n === 1 ? '' : 's'} restored`);
+    } catch (err: any) {
+      ordersLive.mutate(() => snapshot);
+      toast(`❌ ${err.response?.data?.error || 'Failed — please try again'}`);
+    } finally {
+      ordersLive.refresh();
+    }
+  };
+
+  const cancelSelected = () => {
+    const chosen = orders.filter(o => selected.has(o.id) && o.status !== 'CANCELLED');
+    if (!chosen.length) return;
+    const started = chosen.filter(o => !ASSIGNABLE.includes(o.status)).length;
+    setConfirmBox({
+      title: `Mark ${chosen.length} order${chosen.length === 1 ? '' : 's'} as cancelled?`,
+      body: (
+        <>
+          <p>{chosen.length === 1 ? chosen[0].so_number : 'They'} will stay in the list as <b>Cancelled</b> and disappear from pickers' and checkers' screens.</p>
+          {started > 0 && <p className="mt-2 text-orange-700">{started} of these {started === 1 ? 'has' : 'have'} already started.</p>}
+          <p className="mt-2 text-blue-500">You can restore them later if needed.</p>
+        </>
+      ),
+      confirmLabel: '⛔ Mark cancelled',
+      danger: true,
+      onConfirm: () => setCancelled(chosen.map(o => o.id), true),
+    });
+  };
+
+  const restoreOrders = (ids: string[]) => setCancelled(ids, false);
+
   const approveOrder = (order: Order) => {
     if (order.approved) return;
     setConfirmBox({
@@ -306,13 +348,17 @@ export default function OrdersPage() {
     const list = byDelivery.filter(o => f.test(o) && (!q || o.so_number.toLowerCase().includes(q)));
     // Unassigned orders from the latest upload always go first
     const isFresh = (o: Order) => newIds.has(String(o.id)) && o.status === 'UNASSIGNED';
-    return [...list.filter(isFresh), ...list.filter(o => !isFresh(o))];
+    const cancelled = (o: Order) => o.status === 'CANCELLED';
+    return [...list.filter(isFresh), ...list.filter(o => !isFresh(o) && !cancelled(o)), ...list.filter(cancelled)];
   }, [byDelivery, filter, search, newIds]);
   const isNew = (o: Order) => newIds.has(String(o.id)) && o.status === 'UNASSIGNED';
   const freshCount = orders.filter(isNew).length;
 
   const selectableVisible = filtered;
   const allVisibleSelected = selectableVisible.length > 0 && selectableVisible.every(o => selected.has(o.id));
+
+  const selectedOrders = orders.filter(o => selected.has(o.id));
+  const allSelectedCancelled = selectedOrders.length > 0 && selectedOrders.every(o => o.status === 'CANCELLED');
 
   const toggle = (id: string) => setSelected(prev => {
     const next = new Set(prev);
@@ -396,14 +442,14 @@ export default function OrdersPage() {
         <div className="grid grid-cols-3 lg:grid-cols-6 gap-2 md:gap-3 mb-4">
           {FILTERS.map(f => {
             const active = filter === f.key;
-            const isApproval = f.key === 'approval';
+            const isCancelled = f.key === 'cancelled';
             return (
               <button key={f.key} onClick={() => setFilter(active && f.key !== 'all' ? 'all' : f.key)}
                 className={`rounded-2xl p-3 md:p-4 text-center transition-all active:scale-95
-                  ${isApproval ? 'bg-orange-900' : 'bg-blue-900'}
+                  ${isCancelled ? 'bg-red-950/70' : 'bg-blue-900'}
                   ${active ? 'ring-2 ring-blue-300' : 'hover:brightness-110'}`}>
                 <div className={`text-xl md:text-3xl font-bold ${f.color}`}>{byDelivery.filter(f.test).length}</div>
-                <div className={`text-[11px] md:text-xs mt-1 font-medium ${isApproval ? 'text-orange-400' : 'text-blue-300'}`}>{f.label}</div>
+                <div className={`text-[11px] md:text-xs mt-1 font-medium ${isCancelled ? 'text-red-300' : 'text-blue-300'}`}>{f.label}</div>
               </button>
             );
           })}
@@ -568,12 +614,13 @@ export default function OrdersPage() {
                 ) : filtered.map((o, i) => {
                   const assignable = ASSIGNABLE.includes(o.status);
                   const isSel = selected.has(o.id);
+                  const isCancelled = o.status === 'CANCELLED';
                   return (
-                  <tr key={o.id} className={isSel ? 'bg-blue-100' : i % 2 === 0 ? 'bg-white' : 'bg-blue-50'}>
+                  <tr key={o.id} className={`${isSel ? 'bg-blue-100' : i % 2 === 0 ? 'bg-white' : 'bg-blue-50'} ${isCancelled ? 'opacity-60' : ''}`}>
                     <td className="pl-4 py-3">
                       <input type="checkbox" checked={isSel} onChange={() => toggle(o.id)} className="w-4 h-4 accent-blue-600" />
                     </td>
-                    <td className="px-4 py-3 font-bold text-blue-900 whitespace-nowrap">
+                    <td className={`px-4 py-3 font-bold whitespace-nowrap ${isCancelled ? 'text-red-800 line-through' : 'text-blue-900'}`}>
                       {o.so_number}
                       {isNew(o) && <span className="ml-2 bg-green-500 text-white px-1.5 py-0.5 rounded text-[10px] font-bold">NEW</span>}
                     </td>
@@ -613,6 +660,12 @@ export default function OrdersPage() {
                     <td className="px-4 py-3 text-blue-900 font-mono text-xs font-bold">{o.total_time || '—'}</td>
                     <td className="px-4 py-3">
                       <div className="flex gap-2 items-center">
+                        {isCancelled && (
+                          <button onClick={() => restoreOrders([o.id])} title={o.cancelled_by ? `Cancelled by ${o.cancelled_by}` : 'Cancelled'}
+                            className="bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold px-2 py-1 rounded-lg text-xs whitespace-nowrap">
+                            ↩ Restore
+                          </button>
+                        )}
                         {assignable && (
                           <button onClick={() => deleteOrder(o)}
                             className="bg-red-600 hover:bg-red-700 active:scale-95 text-white p-2 rounded-lg transition-all" title="Delete order">
@@ -649,8 +702,9 @@ export default function OrdersPage() {
           ) : filtered.map(o => {
             const assignable = ASSIGNABLE.includes(o.status);
             const isSel = selected.has(o.id);
+            const isCancelled = o.status === 'CANCELLED';
             return (
-            <div key={o.id} className={`bg-white rounded-2xl p-3 transition-all ${isSel ? 'ring-4 ring-blue-400' : ''}`}>
+            <div key={o.id} className={`rounded-2xl p-3 transition-all ${isCancelled ? 'bg-red-50/90' : 'bg-white'} ${isSel ? 'ring-4 ring-blue-400' : ''}`}>
               <div className="flex items-center gap-3">
                 <button onClick={() => toggle(o.id)} aria-label="Select order"
                   className={`w-8 h-8 shrink-0 rounded-lg border-2 flex items-center justify-center text-sm font-bold
@@ -659,7 +713,7 @@ export default function OrdersPage() {
                 </button>
                 <div className="flex-1 min-w-0" onClick={() => toggle(o.id)}>
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <span className="font-bold text-blue-900 text-base whitespace-nowrap">{o.so_number}</span>
+                    <span className={`font-bold text-base whitespace-nowrap ${isCancelled ? 'text-red-800 line-through' : 'text-blue-900'}`}>{o.so_number}</span>
                     {isNew(o) && <span className="bg-green-500 text-white px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0">NEW</span>}
                     <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${STATUS_COLORS[o.status] || ''}`}>{o.status}</span>
                   </div>
@@ -684,7 +738,20 @@ export default function OrdersPage() {
                     ${o.picker_id ? 'border-blue-200 bg-blue-50 text-blue-900 font-semibold' : 'border-orange-300 bg-orange-50 text-orange-800'}`)
               )}
 
-              {!assignable && (
+              {isCancelled && (
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="flex-1 text-xs text-red-700">
+                    ⛔ Cancelled{o.cancelled_by ? ` by ${o.cancelled_by}` : ''}
+                    {o.cancelled_at && ` · ${new Date(o.cancelled_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`}
+                  </span>
+                  <button onClick={() => restoreOrders([o.id])}
+                    className="shrink-0 bg-white border border-blue-200 text-blue-700 font-bold px-3 py-2 rounded-xl text-xs active:scale-95">
+                    ↩ Restore
+                  </button>
+                </div>
+              )}
+
+              {!assignable && !isCancelled && (
                 <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-blue-700 mt-2">
                   <div><span className="font-semibold">Checker 1:</span> {o.checker_name || '—'}</div>
                   {o.needs_second_checker && (
@@ -716,28 +783,43 @@ export default function OrdersPage() {
         </div>
         )}
 
-        {/* Bulk action bar: assign or delete the selected orders */}
+        {/* Bulk action bar: assign, cancel or delete the selected orders */}
         {selected.size > 0 && (
           <div className="fixed inset-x-0 bottom-16 z-40 px-3 pb-2 print:hidden">
-            <div className="max-w-2xl mx-auto bg-white rounded-2xl shadow-2xl border border-blue-200 p-3 flex items-center gap-2">
+            <div className="max-w-2xl mx-auto bg-white rounded-2xl shadow-2xl border border-blue-200 p-3 flex flex-wrap items-center gap-2">
               <button onClick={() => setSelected(new Set())} aria-label="Clear selection"
                 className="w-10 h-10 shrink-0 rounded-xl bg-blue-50 text-blue-700 font-bold">✕</button>
-              <div className="shrink-0 text-blue-900 font-bold text-sm leading-tight">
+              <div className="shrink-0 text-blue-900 font-bold text-sm leading-tight mr-auto sm:mr-0">
                 {selected.size}<span className="block text-[10px] font-semibold text-blue-400">selected</span>
               </div>
-              <select value={bulkPicker} onChange={e => setBulkPicker(e.target.value)}
-                className="flex-1 min-w-0 border-2 border-blue-200 rounded-xl px-2 py-2.5 text-sm font-semibold text-blue-900 focus:outline-none focus:border-blue-500">
-                <option value="">Choose picker…</option>
-                {pickers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-              <button onClick={assignSelected} disabled={!bulkPicker}
-                className="shrink-0 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-200 active:scale-95 text-white font-bold px-3 py-2.5 rounded-xl text-sm transition-all">
-                Assign
-              </button>
+              {allSelectedCancelled ? (
+                <button onClick={() => restoreOrders([...selected])}
+                  className="shrink-0 bg-blue-50 hover:bg-blue-100 active:scale-95 text-blue-700 font-bold px-3 py-2.5 rounded-xl text-sm transition-all">
+                  ↩ Restore
+                </button>
+              ) : (
+                <button onClick={cancelSelected}
+                  className="shrink-0 bg-orange-100 hover:bg-orange-200 active:scale-95 text-orange-800 font-bold px-3 py-2.5 rounded-xl text-sm transition-all">
+                  ⛔ Cancel order{selected.size === 1 ? '' : 's'}
+                </button>
+              )}
               <button onClick={deleteSelected} disabled={deleting} aria-label="Delete selected" title="Delete selected"
-                className="shrink-0 bg-red-600 hover:bg-red-700 disabled:bg-red-300 active:scale-95 text-white p-2.5 rounded-xl transition-all">
+                className="shrink-0 bg-red-600 hover:bg-red-700 disabled:bg-red-300 active:scale-95 text-white p-2.5 rounded-xl transition-all sm:order-last">
                 <TrashIcon size={18} />
               </button>
+              {!allSelectedCancelled && (
+                <div className="basis-full sm:basis-auto sm:flex-1 flex gap-2 min-w-0">
+                  <select value={bulkPicker} onChange={e => setBulkPicker(e.target.value)}
+                    className="flex-1 min-w-0 border-2 border-blue-200 rounded-xl px-2 py-2.5 text-sm font-semibold text-blue-900 focus:outline-none focus:border-blue-500">
+                    <option value="">Choose picker…</option>
+                    {pickers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                  <button onClick={assignSelected} disabled={!bulkPicker}
+                    className="shrink-0 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-200 active:scale-95 text-white font-bold px-4 py-2.5 rounded-xl text-sm transition-all">
+                    Assign
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}

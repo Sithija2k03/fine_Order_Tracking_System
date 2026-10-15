@@ -20,7 +20,7 @@ router.get('/board', auth, async (req, res) => {
               o.picker_id::text AS picker_id, p.name AS picker_name
          FROM orders o
          JOIN pickers p ON p.id = o.picker_id
-        WHERE o.department = $1 AND DATE(o.created_at) = $2
+        WHERE o.department = $1 AND DATE(o.created_at) = $2 AND o.status <> 'CANCELLED'
         ORDER BY p.name, o.created_at`,
       [department, date]
     );

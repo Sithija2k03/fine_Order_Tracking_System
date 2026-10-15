@@ -19,6 +19,36 @@ const STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_signoffs_picker   ON picker_signoffs (picker_id, signed_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_signoffs_orders   ON picker_signoffs USING GIN (order_ids)`,
 
+  // Cancelled orders: remember who/when and the status before cancelling (for Restore)
+  `ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ`,
+  `ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancelled_by TEXT`,
+  `ALTER TABLE orders ADD COLUMN IF NOT EXISTS status_before_cancel TEXT`,
+  // If the status column is a Postgres enum, add the new value
+  `DO $$
+   DECLARE t regtype;
+   BEGIN
+     SELECT a.atttypid::regtype INTO t FROM pg_attribute a
+      WHERE a.attrelid = 'orders'::regclass AND a.attname = 'status';
+     IF EXISTS (SELECT 1 FROM pg_type WHERE oid = t AND typtype = 'e') THEN
+       EXECUTE format('ALTER TYPE %s ADD VALUE IF NOT EXISTS %L', t, 'CANCELLED');
+     END IF;
+   END $$`,
+  // If a CHECK constraint limits status values and doesn't allow CANCELLED, widen it
+  `DO $$
+   DECLARE r record;
+   BEGIN
+     FOR r IN SELECT conname FROM pg_constraint
+               WHERE conrelid = 'orders'::regclass AND contype = 'c'
+                 AND pg_get_constraintdef(oid) ILIKE '%status%'
+                 AND pg_get_constraintdef(oid) ILIKE '%UNASSIGNED%'
+                 AND pg_get_constraintdef(oid) NOT ILIKE '%CANCELLED%'
+     LOOP
+       EXECUTE format('ALTER TABLE orders DROP CONSTRAINT %I', r.conname);
+       EXECUTE format('ALTER TABLE orders ADD CONSTRAINT %I CHECK (status IN '
+         '(''UNASSIGNED'',''ASSIGNED'',''PICKING'',''PICKED'',''CHECKING'',''DONE'',''CANCELLED'')) NOT VALID', r.conname);
+     END LOOP;
+   END $$`,
+
   // Speed up the daily dashboards
   `CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders (created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_orders_picker_id  ON orders (picker_id)`,
