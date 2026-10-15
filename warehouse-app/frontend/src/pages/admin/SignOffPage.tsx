@@ -4,6 +4,7 @@ import api from '../../api/index';
 import { useLive } from '../../lib/useLive';
 import { deptLabel } from '../../lib/dept';
 import { useToast } from '../../components/Toast';
+import { downloadSignoffReport } from '../../lib/exportReport';
 import SignaturePad, { type SignaturePadHandle } from '../../components/SignaturePad';
 
 interface BoardOrder { id: string; so_number: string; status: string; size: string; delivery_type: string; }
@@ -97,8 +98,17 @@ export default function SignOffPage() {
               <h1 className="text-2xl font-bold text-white mt-1">✍️ Picker Sign-off</h1>
               <p className="text-blue-300 text-sm mt-1">Tap a picker, let them check the list and sign.</p>
             </div>
-            <input type="date" value={date} onChange={e => setDate(e.target.value)}
-              className="px-3 py-2 bg-blue-800 text-white border border-blue-600 rounded-xl text-sm focus:outline-none" />
+            <div className="flex flex-col items-end gap-2">
+              <input type="date" value={date} onChange={e => setDate(e.target.value)}
+                className="px-3 py-2 bg-blue-800 text-white border border-blue-600 rounded-xl text-sm focus:outline-none" />
+              <button onClick={async () => {
+                  toast('⏳ Preparing report…', { type: 'info', ms: 1500 });
+                  try { await downloadSignoffReport(dept, date); } catch (err: any) { toast(`❌ ${err.message}`); }
+                }}
+                className="bg-white hover:bg-blue-50 active:scale-95 text-blue-900 font-bold px-3 py-2 rounded-xl text-sm whitespace-nowrap">
+                📥 Export
+              </button>
+            </div>
           </div>
           <div className="grid grid-cols-3 gap-2 mt-4">
             <MiniStat value={counts.total}   label="Pickers"  className="text-white" />

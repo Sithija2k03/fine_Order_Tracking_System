@@ -5,6 +5,7 @@ import UploadOrdersModal from './UploadOrdersModal';
 import { useLive } from '../../lib/useLive';
 import { deptLabel as labelFor } from '../../lib/dept';
 import { useToast } from '../../components/Toast';
+import { downloadSignoffReport } from '../../lib/exportReport';
 
 interface Order {
   id: string;
@@ -304,25 +305,17 @@ export default function OrdersPage() {
     });
   };
 
+  const [exporting, setExporting] = useState(false);
   const exportOrders = async () => {
+    if (exporting) return;
+    setExporting(true);
+    toast('⏳ Preparing report…', { type: 'info', ms: 1500 });
     try {
-      const res = await api.get(`/orders/export?date=${date}&department=${dept}`);
-      const rows = res.data;
-      if (!rows.length) { toast('❌ No orders to export for this date'); return; }
-      const headers = Object.keys(rows[0]);
-      const csv = [
-        headers.join(','),
-        ...rows.map((r: any) => headers.map(h => `"${r[h] ?? ''}"`).join(','))
-      ].join('\n');
-      const blob = new Blob([csv], { type: 'text/csv' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `Orders_${dept}_${date}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      toast('❌ Export failed');
+      await downloadSignoffReport(dept, date);
+    } catch (err: any) {
+      toast(`❌ ${err.message}`);
+    } finally {
+      setExporting(false);
     }
   };
 

@@ -4,6 +4,7 @@ const pool = require('../config/db');
 const auth = require('../middleware/auth');
 const multer = require('multer');
 const { parseSalesOrderReport } = require('../utils/salesOrderParser');
+const { buildSignoffWorkbook } = require('../utils/signoffReport');
 
 // Report uploads are kept in memory only — nothing is written to disk.
 const upload = multer({
@@ -49,6 +50,22 @@ router.get('/', auth, async (req, res) => {
     `;
     const result = await pool.query(query, params);
     res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Excel export: picker sign-off sheet (with signature images + HOD column) and order details
+router.get('/export-xlsx', auth, async (req, res) => {
+  const date = req.query.date || new Date().toISOString().split('T')[0];
+  const { department } = req.query;
+  try {
+    const wb = await buildSignoffWorkbook({ date, department });
+    const buffer = await wb.xlsx.writeBuffer();
+    const deptName = department === 'assembly' ? 'Accessories' : department === 'machinery' ? 'Machinery' : 'All';
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="Picker_Signoff_${deptName}_${date}.xlsx"`);
+    res.send(Buffer.from(buffer));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
