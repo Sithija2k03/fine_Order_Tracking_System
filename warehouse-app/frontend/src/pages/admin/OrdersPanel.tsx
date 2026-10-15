@@ -72,6 +72,17 @@ const DELIVERY_STYLE: Record<string, string> = {
 };
 const deliveryStyle = (t: string) => DELIVERY_STYLE[t] || 'bg-blue-50 text-blue-600 border-blue-200';
 const DELIVERY_KEY = 'deliveryFilter';
+
+// SO number sort: 'default' = latest upload first; 'asc' / 'desc' by SO number.
+// Natural order, so SO/26/10/999 < SO/26/10/1000 and each prefix (SO, TO, FEO) stays together.
+type SortMode = 'default' | 'asc' | 'desc';
+const SORT_KEY = 'orderSort';
+const SORT_NEXT: Record<SortMode, SortMode> = { default: 'asc', asc: 'desc', desc: 'default' };
+const SORT_LABEL: Record<SortMode, string> = { default: '↕ Latest first', asc: 'SO No. ↑', desc: 'SO No. ↓' };
+const soCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+const loadSort = (): SortMode => {
+  try { const v = localStorage.getItem(SORT_KEY); return v === 'asc' || v === 'desc' ? v : 'default'; } catch { return 'default'; }
+};
 const loadDeliveryFilter = (): string[] => {
   try { return JSON.parse(localStorage.getItem(DELIVERY_KEY) || '[]'); } catch { return []; }
 };
@@ -89,6 +100,12 @@ export default function OrdersPage() {
   const [filter, setFilter]           = useState<FilterKey>('all');
   // Delivery types to show (empty = all). Remembered on this device.
   const [delivery, setDeliveryState]  = useState<string[]>(loadDeliveryFilter);
+  const [sort, setSortState]          = useState<SortMode>(loadSort);
+  const cycleSort = () => {
+    const next = SORT_NEXT[sort];
+    setSortState(next);
+    try { localStorage.setItem(SORT_KEY, next); } catch { /* ignore */ }
+  };
   const setDelivery = (v: string[]) => {
     setDeliveryState(v);
     try { localStorage.setItem(DELIVERY_KEY, JSON.stringify(v)); } catch { /* ignore */ }
@@ -339,11 +356,17 @@ export default function OrdersPage() {
     const f = FILTERS.find(x => x.key === filter)!;
     const q = search.trim().toLowerCase();
     const list = byDelivery.filter(o => f.test(o) && (!q || o.so_number.toLowerCase().includes(q)));
-    // Unassigned orders from the latest upload always go first
-    const isFresh = (o: Order) => newIds.has(String(o.id)) && o.status === 'UNASSIGNED';
     const cancelled = (o: Order) => o.status === 'CANCELLED';
+    if (sort !== 'default') {
+      // Strict SO number order (cancelled still at the bottom)
+      const dir = sort === 'asc' ? 1 : -1;
+      const sorted = [...list].sort((a, b) => dir * soCollator.compare(a.so_number, b.so_number));
+      return [...sorted.filter(o => !cancelled(o)), ...sorted.filter(cancelled)];
+    }
+    // Default: unassigned orders from the latest upload first, newest first
+    const isFresh = (o: Order) => newIds.has(String(o.id)) && o.status === 'UNASSIGNED';
     return [...list.filter(isFresh), ...list.filter(o => !isFresh(o) && !cancelled(o)), ...list.filter(cancelled)];
-  }, [byDelivery, filter, search, newIds]);
+  }, [byDelivery, filter, search, newIds, sort]);
   const isNew = (o: Order) => newIds.has(String(o.id)) && o.status === 'UNASSIGNED';
   const freshCount = orders.filter(isNew).length;
 
@@ -562,6 +585,11 @@ export default function OrdersPage() {
           <input type="search" value={search} onChange={e => setSearch(e.target.value)}
             placeholder="🔍 Search SO number..."
             className="flex-1 min-w-[12rem] md:flex-none md:w-72 px-4 py-3 bg-blue-900 text-white placeholder-blue-400 border-2 border-blue-700 rounded-xl text-sm focus:outline-none focus:border-blue-400" />
+          <button onClick={cycleSort} title="Sort by SO number"
+            className={`shrink-0 font-semibold px-4 py-3 rounded-xl text-sm transition-all active:scale-95
+              ${sort === 'default' ? 'bg-blue-800 hover:bg-blue-700 text-blue-100' : 'bg-white text-blue-900'}`}>
+            {SORT_LABEL[sort]}
+          </button>
           {selectableVisible.length > 0 && (
             <button onClick={toggleAllVisible}
               className="bg-blue-800 hover:bg-blue-700 active:scale-95 text-blue-100 font-semibold px-4 py-3 rounded-xl text-sm transition-all">
@@ -587,7 +615,11 @@ export default function OrdersPage() {
                     <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible}
                       disabled={!selectableVisible.length} className="w-4 h-4 accent-blue-300" title="Select all" />
                   </th>
-                  <th className="px-4 py-3 text-left font-semibold">SO #</th>
+                  <th className="px-4 py-3 text-left font-semibold">
+                    <button onClick={cycleSort} title="Sort by SO number" className="inline-flex items-center gap-1 hover:text-blue-100">
+                      SO # <span className="text-xs opacity-80">{sort === 'asc' ? '▲' : sort === 'desc' ? '▼' : '↕'}</span>
+                    </button>
+                  </th>
                   <th className="px-4 py-3 text-left font-semibold">Status</th>
                   <th className="px-4 py-3 text-left font-semibold">Size</th>
                   <th className="px-4 py-3 text-left font-semibold">Delivery</th>
