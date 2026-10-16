@@ -317,6 +317,29 @@ router.patch('/restore', auth, async (req, res) => {
   }
 });
 
+// Unassign orders — take them back from the picker.
+// ASSIGNED orders go straight back to UNASSIGNED. PICKING orders are also allowed:
+// their picking start time is cleared (the picking timer starts again on re-assign).
+// Orders already PICKED or further along can't be unassigned.
+// Body: { order_ids: [...] }
+router.patch('/unassign', auth, async (req, res) => {
+  const { order_ids } = req.body;
+  if (!Array.isArray(order_ids) || !order_ids.length) return res.status(400).json({ error: 'No orders selected' });
+  try {
+    const result = await pool.query(
+      `UPDATE orders
+          SET picker_id = NULL, status = 'UNASSIGNED',
+              picker_start = NULL, picker_end = NULL, updated_at = NOW()
+        WHERE id::text = ANY($1::text[]) AND status IN ('ASSIGNED','PICKING')
+        RETURNING id`,
+      [order_ids.map(String)]
+    );
+    res.json({ unassigned: result.rowCount, skipped: order_ids.length - result.rowCount });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Assign many orders to one picker in a single request (multi-select on the Orders page)
 // Body: { order_ids: [...], picker_id }
 router.patch('/assign-bulk', auth, async (req, res) => {

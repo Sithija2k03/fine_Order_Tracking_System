@@ -5,7 +5,7 @@
 html, body { background-color: #172554; }
 
 @keyframes toastIn {
-  from { opacity: 0; transform: translateY(8px) scale(.98); }
+  from { opacity: 0; transform: translateY(-8px) scale(.98); }
   to   { opacity: 1; transform: none; }
 }
 

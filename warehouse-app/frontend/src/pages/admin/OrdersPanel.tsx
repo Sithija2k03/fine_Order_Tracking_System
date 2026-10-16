@@ -47,6 +47,8 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const ASSIGNABLE = ['UNASSIGNED', 'ASSIGNED'];
+const UNASSIGNABLE = ['ASSIGNED', 'PICKING'];   // can be taken back from the picker
+const UNASSIGN = '__unassign';
 const NO_ORDERS: Order[] = [];
 const NO_PICKERS: Picker[] = [];
 
@@ -176,6 +178,7 @@ export default function OrdersPage() {
 
   // ── Assign one order — updates the screen instantly, saves in the background ──
   const assignPicker = async (order: Order, pid: string) => {
+    if (pid === UNASSIGN) { unassignOrders([order]); return; }
     if (!pid || pid === order.picker_id) return;
     const before = { picker_id: order.picker_id, picker_name: order.picker_name, status: order.status };
     patchOrders([order.id], { picker_id: pid, picker_name: pickerName(pid), status: 'ASSIGNED' });
@@ -187,8 +190,59 @@ export default function OrdersPage() {
     }
   };
 
+  // ── Unassign (take orders back from the picker) ──
+  const doUnassign = async (list: Order[]) => {
+    const ids = list.map(o => o.id);
+    const snapshot = orders;
+    setConfirmBox(null);
+    setSelected(new Set());
+    patchOrders(ids, { picker_id: null, picker_name: '', status: 'UNASSIGNED' });
+    try {
+      const res = await api.patch('/orders/unassign', { order_ids: ids });
+      const n = res.data.unassigned;
+      toast(`↩ ${n} order${n === 1 ? '' : 's'} unassigned` + (res.data.skipped ? ` · ${res.data.skipped} skipped` : ''));
+    } catch (err: any) {
+      ordersLive.mutate(() => snapshot);
+      toast(`❌ ${err.response?.data?.error || 'Failed to unassign'}`);
+    } finally {
+      ordersLive.refresh();
+    }
+  };
+
+  const unassignOrders = (candidates: Order[]) => {
+    const list = candidates.filter(o => UNASSIGNABLE.includes(o.status));
+    if (!list.length) {
+      toast('❌ Only assigned or in-picking orders can be unassigned');
+      return;
+    }
+    const picking = list.filter(o => o.status === 'PICKING');
+    const notPossible = candidates.length - list.length;
+    // Plain ASSIGNED orders: no questions asked
+    if (!picking.length && !notPossible) { doUnassign(list); return; }
+    setConfirmBox({
+      title: `Unassign ${list.length} order${list.length === 1 ? '' : 's'}?`,
+      body: (
+        <>
+          {picking.length > 0 && (
+            <p className="bg-orange-50 border border-orange-200 text-orange-800 rounded-lg px-3 py-2">
+              ⚠ {picking.length === 1 ? `${picking[0].so_number} is` : `${picking.length} orders are`} being picked right now
+              {picking[0].picker_name ? ` by ${picking[0].picker_name}` : ''}. The picking time will be reset.
+            </p>
+          )}
+          {notPossible > 0 && (
+            <p className="mt-2 text-blue-500">{notPossible} selected order{notPossible === 1 ? ' is' : 's are'} already picked or not assigned and will be left as {notPossible === 1 ? 'it is' : 'they are'}.</p>
+          )}
+          <p className="mt-2">They'll go back to <b>Unassigned</b> so you can give them to another picker.</p>
+        </>
+      ),
+      confirmLabel: '↩ Unassign',
+      onConfirm: () => doUnassign(list),
+    });
+  };
+
   // ── Assign many orders at once ──
   const assignSelected = async () => {
+    if (bulkPicker === UNASSIGN) { unassignOrders(orders.filter(o => selected.has(o.id))); return; }
     const ids = orders.filter(o => selected.has(o.id) && ASSIGNABLE.includes(o.status)).map(o => o.id);
     if (!bulkPicker) return;
     if (!ids.length) { toast('❌ None of the selected orders can be assigned (already started)'); return; }
@@ -392,6 +446,7 @@ export default function OrdersPage() {
     <select value={order.picker_id || ''} onChange={e => assignPicker(order, e.target.value)} className={className}>
       <option value="" disabled>Assign…</option>
       {pickers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+      {order.picker_id && <option value={UNASSIGN}>↩ Unassign (remove picker)</option>}
     </select>
   );
 
@@ -662,7 +717,13 @@ export default function OrdersPage() {
                       {assignable ? (
                         pickerSelect(o, "border border-blue-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-blue-500")
                       ) : (
-                        <span className="text-blue-800 font-medium">{o.picker_name || '—'}</span>
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="text-blue-800 font-medium">{o.picker_name || '—'}</span>
+                          {o.status === 'PICKING' && (
+                            <button onClick={() => unassignOrders([o])} title="Unassign — take this order back"
+                              className="text-orange-600 hover:bg-orange-50 rounded px-1 text-xs font-bold">↩</button>
+                          )}
+                        </span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-blue-600 font-mono text-xs">{o.picking_time || '—'}</td>
@@ -763,6 +824,16 @@ export default function OrdersPage() {
                     ${o.picker_id ? 'border-blue-200 bg-blue-50 text-blue-900 font-semibold' : 'border-orange-300 bg-orange-50 text-orange-800'}`)
               )}
 
+              {o.status === 'PICKING' && (
+                <div className="mt-2 flex items-center gap-2 bg-yellow-50 border border-yellow-200 rounded-xl px-3 py-2">
+                  <span className="flex-1 text-xs text-yellow-800">🔄 Being picked by <b>{o.picker_name || '—'}</b></span>
+                  <button onClick={() => unassignOrders([o])}
+                    className="shrink-0 bg-white border border-orange-300 text-orange-700 font-bold px-3 py-1.5 rounded-lg text-xs active:scale-95">
+                    ↩ Unassign
+                  </button>
+                </div>
+              )}
+
               {isCancelled && (
                 <div className="mt-2 flex items-center gap-2">
                   <span className="flex-1 text-xs text-red-700">
@@ -838,10 +909,14 @@ export default function OrdersPage() {
                     className="flex-1 min-w-0 border-2 border-blue-200 rounded-xl px-2 py-2.5 text-sm font-semibold text-blue-900 focus:outline-none focus:border-blue-500">
                     <option value="">Choose picker…</option>
                     {pickers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    {selectedOrders.some(o => UNASSIGNABLE.includes(o.status)) && (
+                      <option value={UNASSIGN}>↩ Unassign (remove picker)</option>
+                    )}
                   </select>
                   <button onClick={assignSelected} disabled={!bulkPicker}
-                    className="shrink-0 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-200 active:scale-95 text-white font-bold px-4 py-2.5 rounded-xl text-sm transition-all">
-                    Assign
+                    className={`shrink-0 disabled:bg-blue-200 active:scale-95 text-white font-bold px-4 py-2.5 rounded-xl text-sm transition-all
+                      ${bulkPicker === UNASSIGN ? 'bg-orange-500 hover:bg-orange-600' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                    {bulkPicker === UNASSIGN ? 'Unassign' : 'Assign'}
                   </button>
                 </div>
               )}

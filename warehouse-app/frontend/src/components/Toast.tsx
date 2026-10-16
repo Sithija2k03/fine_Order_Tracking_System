@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
 
-// Small, non-blocking notifications that float above the bottom bar.
+// Small, non-blocking notifications at the top of the screen (clear of the bottom bars).
 // They never push the page content around and disappear on their own.
 
 type ToastType = 'success' | 'error' | 'info';
@@ -28,7 +28,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={toast}>
       {children}
-      <div className="fixed inset-x-0 bottom-24 z-[60] flex flex-col items-center gap-2 px-4 pointer-events-none print:hidden">
+      <div className="fixed inset-x-0 top-3 z-[80] flex flex-col items-center gap-2 px-4 pointer-events-none print:hidden pt-[env(safe-area-inset-top)]">
         {items.map(t => (
           <div key={t.id}
             className={`pointer-events-auto max-w-md w-full sm:w-auto flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl text-sm font-semibold animate-[toastIn_.15s_ease-out]
