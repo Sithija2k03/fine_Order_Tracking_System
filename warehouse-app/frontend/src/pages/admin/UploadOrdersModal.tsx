@@ -17,6 +17,7 @@ interface ParsedOrder {
   already_exists: boolean;
   existing_status: string | null;
   existing_picker: string | null;
+  existing_line_count: number | null;
   items: { item: string; qty: number; unit?: string; code?: string; location?: string }[];
 }
 
@@ -101,8 +102,12 @@ export default function UploadOrdersModal({ department, pickers, onClose, onImpo
   }, [rows]);
 
   // ── Step 2: create the selected orders ──
+  // Orders already in the system with no item list yet — their items get filled in on import
+  const backfillRows = (rows ?? []).filter(r => r.already_exists && r.existing_line_count === 0 && r.items?.length);
+  const canImport = selected.length > 0 || backfillRows.length > 0;
+
   const importOrders = async () => {
-    if (!selected.length) return;
+    if (!canImport) return;
     const missing = selected.filter(r => !r.delivery_type || !r.size);
     if (missing.length) {
       setError(`Choose a delivery type and size for: ${missing.map(r => r.so_number).join(', ')}`);
@@ -122,10 +127,16 @@ export default function UploadOrdersModal({ department, pickers, onClose, onImpo
           salesman: r.salesman,
           items: r.items,          // item lines → the picker's digital sales order
         })),
+        backfill: backfillRows.map(r => ({
+          so_number: r.so_number, items: r.items, customer: r.customer, salesman: r.salesman,
+        })),
       });
-      const { created, skipped, orders } = res.data;
-      onImported(`✅ ${created} new order${created === 1 ? '' : 's'} added on top` +
-        (skipped?.length ? ` · ${skipped.length} already existed and were skipped` : ''),
+      const { created, skipped, orders, backfilled } = res.data;
+      const parts = [];
+      if (created) parts.push(`${created} new order${created === 1 ? '' : 's'} added on top`);
+      if (backfilled) parts.push(`item lists added to ${backfilled} existing order${backfilled === 1 ? '' : 's'}`);
+      if (!created && !backfilled) parts.push('nothing new to import');
+      onImported(`✅ ${parts.join(' · ')}` + (skipped?.length ? ` · ${skipped.length} skipped` : ''),
         (orders || []).map((o: { id: string }) => String(o.id)));
     } catch (err: any) {
       setError(err.response?.data?.error || 'Import failed. Please try again.');
@@ -210,6 +221,13 @@ export default function UploadOrdersModal({ department, pickers, onClose, onImpo
               {existing > 0 && newRows.length === 0 && (
                 <div className="bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-xl mt-4 text-sm">
                   ✓ No new orders — all {existing} orders in this report are already in the system.
+                </div>
+              )}
+
+              {backfillRows.length > 0 && (
+                <div className="bg-blue-50 border border-blue-300 text-blue-900 px-4 py-3 rounded-xl mt-4 text-sm">
+                  📋 <b>{backfillRows.length} order{backfillRows.length === 1 ? '' : 's'} already in the system {backfillRows.length === 1 ? 'has' : 'have'} no item list</b> yet.
+                  Importing will add their items so pickers get the digital sales order — assignments and progress stay as they are.
                 </div>
               )}
 
@@ -377,9 +395,12 @@ export default function UploadOrdersModal({ department, pickers, onClose, onImpo
             Cancel
           </button>
           {rows && (
-            <button onClick={importOrders} disabled={!selected.length || !!busy}
+            <button onClick={importOrders} disabled={!canImport || !!busy}
               className="bg-blue-600 hover:bg-blue-700 active:scale-95 disabled:bg-blue-300 text-white font-bold px-6 py-3 rounded-xl text-sm transition-all">
-              {busy === 'importing' ? 'Importing…' : `✅ Import ${selected.length} order${selected.length === 1 ? '' : 's'}`}
+              {busy === 'importing' ? 'Importing…'
+                : selected.length && backfillRows.length ? `✅ Import ${selected.length} + add items to ${backfillRows.length}`
+                : selected.length ? `✅ Import ${selected.length} order${selected.length === 1 ? '' : 's'}`
+                : `📋 Add item lists to ${backfillRows.length} order${backfillRows.length === 1 ? '' : 's'}`}
             </button>
           )}
         </div>

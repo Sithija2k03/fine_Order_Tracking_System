@@ -191,7 +191,8 @@ router.post('/upload/preview', auth, (req, res) => {
 
       // Flag orders that are already in the system for this department
       const existing = await pool.query(
-        `SELECT o.so_number, o.status, DATE(o.created_at) AS created_date, p.name AS picker_name
+        `SELECT o.so_number, o.status, DATE(o.created_at) AS created_date, p.name AS picker_name,
+                (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id::text)::int AS line_count
            FROM orders o
            LEFT JOIN pickers p ON p.id = o.picker_id
           WHERE o.so_number = ANY($1) ${department ? 'AND o.department = $2' : ''}`,
@@ -207,6 +208,7 @@ router.post('/upload/preview', auth, (req, res) => {
           already_exists: already.has(o.so_number),
           existing_status: already.get(o.so_number)?.status || null,
           existing_picker: already.get(o.so_number)?.picker_name || null,
+          existing_line_count: already.has(o.so_number) ? already.get(o.so_number).line_count : null,
         })),
       });
     } catch (err) {
@@ -215,13 +217,36 @@ router.post('/upload/preview', auth, (req, res) => {
   });
 });
 
+// Insert item lines for one order (the picker's digital sales order)
+async function insertLines(client, orderId, rawItems) {
+  const items = Array.isArray(rawItems) ? rawItems.filter(it => it && (it.item || it.qty)) : [];
+  if (!items.length) return 0;
+  await client.query(
+    `INSERT INTO order_lines (order_id, line_no, item_code, description, qty, unit, location)
+     SELECT $1, n, c, d, q, u, l
+       FROM unnest($2::int[], $3::text[], $4::text[], $5::numeric[], $6::text[], $7::text[])
+            AS t(n, c, d, q, u, l)`,
+    [String(orderId),
+     items.map((_, i) => i + 1),
+     items.map(it => it.code || null),
+     items.map(it => String(it.item || '').slice(0, 300)),
+     items.map(it => Number(it.qty) || 0),
+     items.map(it => it.unit || null),
+     items.map(it => it.location || null)]);
+  return items.length;
+}
+
 // Step 2: create the orders the admin confirmed in the preview.
 // Body: { department, orders: [{ so_number, size, delivery_type, picker_id? }] }
 // Orders already in the system for this department are skipped, not duplicated.
+// Also accepts `backfill: [{ so_number, items, customer, salesman }]` — orders already in
+// the system that have no item list yet get one (nothing else about them changes).
 router.post('/bulk', auth, async (req, res) => {
-  const { department, orders } = req.body;
+  const { department } = req.body;
+  const orders = Array.isArray(req.body.orders) ? req.body.orders : [];
+  const backfill = Array.isArray(req.body.backfill) ? req.body.backfill : [];
   if (!department) return res.status(400).json({ error: 'Department is required' });
-  if (!Array.isArray(orders) || !orders.length) return res.status(400).json({ error: 'No orders to import' });
+  if (!orders.length && !backfill.length) return res.status(400).json({ error: 'No orders to import' });
 
   const invalid = orders.filter(o => !o.so_number || !o.size || !o.delivery_type);
   if (invalid.length) {
@@ -260,28 +285,36 @@ router.post('/bulk', auth, async (req, res) => {
       const order = result.rows[0];
 
       // Item lines for the picker's digital sales order
-      const items = Array.isArray(o.items) ? o.items.filter(it => it && (it.item || it.qty)) : [];
-      if (items.length) {
-        await client.query(
-          `INSERT INTO order_lines (order_id, line_no, item_code, description, qty, unit, location)
-           SELECT $1, n, c, d, q, u, l
-             FROM unnest($2::int[], $3::text[], $4::text[], $5::numeric[], $6::text[], $7::text[])
-                  AS t(n, c, d, q, u, l)`,
-          [String(order.id),
-           items.map((_, i) => i + 1),
-           items.map(it => it.code || null),
-           items.map(it => String(it.item || '').slice(0, 300)),
-           items.map(it => Number(it.qty) || 0),
-           items.map(it => it.unit || null),
-           items.map(it => it.location || null)]);
-      }
+      await insertLines(client, order.id, o.items);
       created.push(order);
+    }
+
+    // Fill in item lists for existing orders that don't have one yet
+    let backfilled = 0;
+    for (const b of backfill) {
+      const so = String(b.so_number || '').trim().toUpperCase();
+      if (!so) continue;
+      const found = await client.query(
+        `SELECT o.id FROM orders o
+          WHERE o.department = $1 AND o.so_number = $2
+            AND NOT EXISTS (SELECT 1 FROM order_lines l WHERE l.order_id = o.id::text)
+          ORDER BY o.created_at DESC LIMIT 1`,
+        [department, so]);
+      if (!found.rows[0]) continue;
+      const n = await insertLines(client, found.rows[0].id, b.items);
+      if (n) {
+        backfilled++;
+        await client.query(
+          `UPDATE orders SET customer_name = COALESCE(customer_name, $2), sales_rep = COALESCE(sales_rep, $3)
+            WHERE id = $1`,
+          [found.rows[0].id, b.customer || null, b.salesman || null]);
+      }
     }
 
     await client.query('COMMIT');
     created.reverse();   // back to report order for the response
     skipped.reverse();
-    res.json({ created: created.length, skipped, orders: created });
+    res.json({ created: created.length, skipped, backfilled, orders: created });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });

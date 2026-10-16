@@ -54,7 +54,9 @@ export default function PickerDashboard() {
   // Start picking → straight into the digital sales order when it has an item list
   const startPicking = async (orderId: string) => {
     const ok = await act(orderId, 'start-picking', 'PICKING', 'ASSIGNED', '🚀 Picking started');
-    if (ok && (orders.find(o => o.id === orderId)?.line_count || 0) > 0) openSheet(orderId);
+    if (!ok) return;
+    if ((orders.find(o => o.id === orderId)?.line_count || 0) > 0) openSheet(orderId);
+    else toast('ℹ No item list for this order — ask the admin to re-upload today\'s report', { type: 'info', ms: 4000 });
   };
   const endPicking   = (orderId: string) => act(orderId, 'end-picking', 'PICKED', 'PICKING', '✅ Picking completed');
 
