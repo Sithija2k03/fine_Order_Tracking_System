@@ -45,6 +45,9 @@ const COLUMNS = {
   orderType:   ['ordertype'],
   itemDetails: ['itemdetails', 'item', 'itemname'],
   qty:         ['qty', 'quantity'],
+  unit:        ['unit', 'uom'],
+  itemCode:    ['code', 'itemcode', 'productcode', 'partno'],
+  location:    ['location', 'binlocation', 'bin', 'rack'],
   amount:      ['amount', 'value'],
 };
 const REQUIRED = ['soNumber', 'type'];
@@ -176,7 +179,13 @@ async function parseSalesOrderReport(buffer) {
       current.line_count   += 1;
       current.total_qty    += qty;
       current.total_amount += toNum(get(row, 'amount'));
-      current.items.push({ item, qty });
+      current.items.push({
+        item,
+        qty,
+        unit:     clean(get(row, 'unit')),
+        code:     clean(get(row, 'itemCode')),
+        location: clean(get(row, 'location')),
+      });
       lineRows++;
     }
   }

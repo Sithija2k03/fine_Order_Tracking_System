@@ -39,10 +39,13 @@ router.get('/:id/orders', async (req, res) => {
     if (!picker.rows[0]) return res.status(404).json({ error: 'Picker not found' });
 
     const orders = await pool.query(
-      `SELECT id, so_number, status, size, delivery_type
-       FROM orders
-       WHERE picker_id = $1 AND DATE(created_at) = CURRENT_DATE AND status <> 'CANCELLED'
-       ORDER BY created_at DESC`,
+      `SELECT o.id, o.so_number, o.status, o.size, o.delivery_type, o.customer_name,
+        (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id::text)::int AS line_count,
+        (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id::text AND l.picked_qty IS NOT NULL)::int AS lines_done,
+        (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id::text AND l.picked_qty IS NOT NULL AND l.picked_qty < l.qty)::int AS lines_short
+       FROM orders o
+       WHERE o.picker_id = $1 AND DATE(o.created_at) = CURRENT_DATE AND o.status <> 'CANCELLED'
+       ORDER BY o.created_at DESC`,
       [req.params.id]
     );
 

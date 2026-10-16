@@ -12,6 +12,10 @@ interface Order {
   status: string;
   size: string;
   delivery_type: string;
+  customer_name?: string | null;
+  line_count?: number;
+  lines_done?: number;
+  lines_short?: number;
 }
 
 export default function PickerDashboard() {
@@ -36,15 +40,22 @@ export default function PickerDashboard() {
     try {
       await api.patch(`/orders/${orderId}/${path}`, { picker_id: id });
       toast(label);
+      return true;
     } catch (err: any) {
       live.mutate(d => ({ ...d, orders: d.orders.map(o => (o.id === orderId ? { ...o, status: prev } : o)) }));
       toast(`❌ ${err.response?.data?.error || 'Failed — please try again'}`);
+      return false;
     } finally {
       setBusy(b => { const n = new Set(b); n.delete(orderId); return n; });
       live.refresh();
     }
   };
-  const startPicking = (orderId: string) => act(orderId, 'start-picking', 'PICKING', 'ASSIGNED', '🚀 Picking started');
+  const openSheet = (orderId: string) => navigate(`/picker/${id}/pick/${orderId}?dept=${dept}`);
+  // Start picking → straight into the digital sales order when it has an item list
+  const startPicking = async (orderId: string) => {
+    const ok = await act(orderId, 'start-picking', 'PICKING', 'ASSIGNED', '🚀 Picking started');
+    if (ok && (orders.find(o => o.id === orderId)?.line_count || 0) > 0) openSheet(orderId);
+  };
   const endPicking   = (orderId: string) => act(orderId, 'end-picking', 'PICKED', 'PICKING', '✅ Picking completed');
 
   const assigned = orders.filter(o => o.status === 'ASSIGNED');
@@ -133,13 +144,30 @@ export default function PickerDashboard() {
                       <DeliveryTag type={o.delivery_type} />
                     </div>
                   </div>
-                  <button
-                    onClick={() => endPicking(o.id)}
-                    disabled={busy.has(o.id)}
-                    className="w-full bg-blue-600 hover:bg-blue-700 active:scale-95 disabled:bg-blue-300 text-white font-bold py-4 rounded-xl text-base transition-all"
-                  >
-                    ✅ Finish Picking
-                  </button>
+                  {o.customer_name && <p className="text-blue-700 text-sm -mt-2 mb-3 truncate">{o.customer_name}</p>}
+                  {(o.line_count || 0) > 0 ? (
+                    <>
+                      <div className="flex items-center gap-2 mb-2 text-sm">
+                        <div className="flex-1 h-2.5 bg-yellow-200 rounded-full overflow-hidden">
+                          <div className="h-full bg-green-500 transition-all"
+                            style={{ width: `${Math.round(((o.lines_done || 0) / (o.line_count || 1)) * 100)}%` }} />
+                        </div>
+                        <span className="font-bold text-blue-900 shrink-0">{o.lines_done || 0}/{o.line_count} items</span>
+                      </div>
+                      <button onClick={() => openSheet(o.id)}
+                        className="w-full bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold py-4 rounded-xl text-base transition-all">
+                        📋 Continue picking
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => endPicking(o.id)}
+                      disabled={busy.has(o.id)}
+                      className="w-full bg-blue-600 hover:bg-blue-700 active:scale-95 disabled:bg-blue-300 text-white font-bold py-4 rounded-xl text-base transition-all"
+                    >
+                      ✅ Finish Picking
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -160,6 +188,16 @@ export default function PickerDashboard() {
                       <DeliveryTag type={o.delivery_type} />
                     </div>
                   </div>
+                  {(o.customer_name || (o.line_count || 0) > 0) && (
+                    <div className="flex items-center justify-between gap-2 -mt-2 mb-3 text-sm">
+                      <span className="text-blue-700 truncate">{o.customer_name}</span>
+                      {(o.line_count || 0) > 0 && (
+                        <button onClick={() => openSheet(o.id)} className="shrink-0 text-blue-600 font-semibold underline underline-offset-2">
+                          {o.line_count} item{o.line_count === 1 ? '' : 's'} · view
+                        </button>
+                      )}
+                    </div>
+                  )}
                   <button
                     onClick={() => startPicking(o.id)}
                     disabled={busy.has(o.id)}

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
+import { useParams, useSearchParams, useNavigate, Link } from 'react-router-dom';
 import api from '../api/index';
 import { useLive } from '../lib/useLive';
 import { deptLabel } from '../lib/dept';
@@ -18,6 +18,9 @@ interface Order {
   needs_second_checker?: boolean;
   checker2_id?: string;
   checker_id?: string;
+  lines_short?: number;
+  lines_unchecked?: number;
+  line_count?: number;
 }
 
 interface CheckerData {
@@ -29,6 +32,24 @@ interface CheckerData {
   doneOrders: Order[];
 }
 type ListKey = Exclude<keyof CheckerData, 'checkerName'>;
+
+// Picker's notes from the digital sales order: items short or not ticked
+function ShortNote({ o }: { o: Order }) {
+  const link = (o.line_count || 0) > 0 && (
+    <Link to={`/sheet/${o.id}`} className="inline-block mt-1 mb-2 text-sm font-semibold text-blue-600 underline underline-offset-2">
+      📋 View items ({o.line_count})
+    </Link>
+  );
+  if (!o.lines_short && !o.lines_unchecked) return link || null;
+  return (<>
+    {link}
+    <p className="mt-1 mb-2 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-2.5 py-1.5 text-xs font-semibold">
+      ⚠ {o.lines_short ? `${o.lines_short} item${o.lines_short === 1 ? '' : 's'} picked short` : ''}
+      {o.lines_short && o.lines_unchecked ? ' · ' : ''}
+      {o.lines_unchecked ? `${o.lines_unchecked} not ticked by picker` : ''} — check carefully
+    </p>
+  </>);
+}
 
 // ── Confirmation Modal ──────────────────────────────────────────────
 function Modal({
@@ -247,6 +268,7 @@ export default function CheckerDashboard() {
                   <p className="text-blue-500 text-sm">
                     Picked by: <span className="font-semibold">{o.picker_name || '—'}</span>
                   </p>
+                  <ShortNote o={o} />
                   <p className="text-purple-600 text-sm mb-3">
                     1st Checker: <span className="font-semibold">{o.checker1_name || '—'}</span>
                   </p>
@@ -285,6 +307,7 @@ export default function CheckerDashboard() {
                   <p className="text-blue-500 text-sm">
                     Picked by: <span className="font-semibold">{o.picker_name || '—'}</span>
                   </p>
+                  <ShortNote o={o} />
                   {o.needs_second_checker && (
                     <p className="text-purple-600 text-sm mb-1">
                       2nd Checker: <span className="font-semibold">
@@ -322,6 +345,7 @@ export default function CheckerDashboard() {
                   <p className="text-blue-500 text-sm">
                     Picked by: <span className="font-semibold">{o.picker_name || '—'}</span>
                   </p>
+                  <ShortNote o={o} />
                   <p className="text-purple-600 text-sm mb-3">
                     1st Checker: <span className="font-semibold">{o.checker1_name || '—'}</span>
                   </p>
@@ -369,6 +393,7 @@ export default function CheckerDashboard() {
                   <p className="text-blue-500 text-sm mb-3">
                     Picked by: <span className="font-semibold text-blue-700">{o.picker_name || '—'}</span>
                   </p>
+                  <ShortNote o={o} />
                   <button
                     onClick={() => handleStartChecking(o)}
                     disabled={busy.has(o.id)}

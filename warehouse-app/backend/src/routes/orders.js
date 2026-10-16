@@ -40,7 +40,10 @@ router.get('/', auth, async (req, res) => {
         TO_CHAR(o.picking_duration,  'HH24:MI:SS') AS picking_time,
         TO_CHAR(o.idle_duration,     'HH24:MI:SS') AS idle_time,
         TO_CHAR(o.checking_duration, 'HH24:MI:SS') AS checking_time,
-        TO_CHAR(o.total_duration,    'HH24:MI:SS') AS total_time
+        TO_CHAR(o.total_duration,    'HH24:MI:SS') AS total_time,
+        (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id::text)::int AS line_count,
+        (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id::text AND l.picked_qty IS NOT NULL)::int AS lines_done,
+        (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id::text AND l.picked_qty IS NOT NULL AND l.picked_qty < l.qty)::int AS lines_short
       FROM orders o
       LEFT JOIN pickers  p  ON o.picker_id   = p.id
       LEFT JOIN checkers c  ON o.checker_id  = c.id
@@ -248,16 +251,31 @@ router.post('/bulk', auth, async (req, res) => {
       if (skip.has(so)) { skipped.push(so); continue; }
       skip.add(so);   // guards against the same SO twice in one upload
 
-      const result = o.picker_id
-        ? await client.query(
-            `INSERT INTO orders (so_number, size, delivery_type, department, picker_id, status, created_at)
-             VALUES ($1, $2, $3, $4, $5, 'ASSIGNED', clock_timestamp()) RETURNING *`,
-            [so, o.size, o.delivery_type, department, o.picker_id])
-        : await client.query(
-            `INSERT INTO orders (so_number, size, delivery_type, department, created_at)
-             VALUES ($1, $2, $3, $4, clock_timestamp()) RETURNING *`,
-            [so, o.size, o.delivery_type, department]);
-      created.push(result.rows[0]);
+      const result = await client.query(
+        `INSERT INTO orders (so_number, size, delivery_type, department, picker_id, status,
+                             customer_name, sales_rep, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, clock_timestamp()) RETURNING *`,
+        [so, o.size, o.delivery_type, department, o.picker_id || null,
+         o.picker_id ? 'ASSIGNED' : 'UNASSIGNED', o.customer || null, o.salesman || null]);
+      const order = result.rows[0];
+
+      // Item lines for the picker's digital sales order
+      const items = Array.isArray(o.items) ? o.items.filter(it => it && (it.item || it.qty)) : [];
+      if (items.length) {
+        await client.query(
+          `INSERT INTO order_lines (order_id, line_no, item_code, description, qty, unit, location)
+           SELECT $1, n, c, d, q, u, l
+             FROM unnest($2::int[], $3::text[], $4::text[], $5::numeric[], $6::text[], $7::text[])
+                  AS t(n, c, d, q, u, l)`,
+          [String(order.id),
+           items.map((_, i) => i + 1),
+           items.map(it => it.code || null),
+           items.map(it => String(it.item || '').slice(0, 300)),
+           items.map(it => Number(it.qty) || 0),
+           items.map(it => it.unit || null),
+           items.map(it => it.location || null)]);
+      }
+      created.push(order);
     }
 
     await client.query('COMMIT');
@@ -334,6 +352,11 @@ router.patch('/unassign', auth, async (req, res) => {
         RETURNING id`,
       [order_ids.map(String)]
     );
+    // Picking starts over, so clear any items already ticked off
+    if (result.rowCount) {
+      await pool.query(`UPDATE order_lines SET picked_qty = NULL, picked_at = NULL WHERE order_id = ANY($1::text[])`,
+        [result.rows.map(r => String(r.id))]).catch(() => {});
+    }
     res.json({ unassigned: result.rowCount, skipped: order_ids.length - result.rowCount });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -369,6 +392,57 @@ router.patch('/:id/assign', auth, async (req, res) => {
       [picker_id, req.params.id]
     );
     if (!result.rows[0]) return res.status(400).json({ error: 'Cannot reassign after picking started' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Digital sales order (pick list) ─────────────────────────────────
+// Order header + item lines. Public like the picker dashboard.
+router.get('/:id/sheet', async (req, res) => {
+  try {
+    const order = await pool.query(
+      `SELECT o.id, o.so_number, o.status, o.size, o.delivery_type, o.department,
+              o.customer_name, o.sales_rep, o.created_at, o.picker_start,
+              o.picker_id, p.name AS picker_name
+         FROM orders o LEFT JOIN pickers p ON p.id = o.picker_id
+        WHERE o.id::text = $1`,
+      [req.params.id]);
+    if (!order.rows[0]) return res.status(404).json({ error: 'Order not found' });
+    const lines = await pool.query(
+      `SELECT id, line_no, item_code, description, qty::float AS qty, unit, location,
+              picked_qty::float AS picked_qty, picked_at
+         FROM order_lines WHERE order_id = $1 ORDER BY line_no`,
+      [req.params.id]);
+    res.json({ order: order.rows[0], lines: lines.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Tick an item as collected (picked_qty = qty), record a short pick (0 ≤ picked_qty < qty),
+// or untick it (picked_qty = null). Only the assigned picker, only while PICKING.
+// Body: { picker_id, picked_qty }
+router.patch('/:id/lines/:lineId', async (req, res) => {
+  const { picker_id } = req.body;
+  const raw = req.body.picked_qty;
+  try {
+    const check = await pool.query(
+      `SELECT status, picker_id::text AS picker_id FROM orders WHERE id::text = $1`, [req.params.id]);
+    const o = check.rows[0];
+    if (!o) return res.status(404).json({ error: 'Order not found' });
+    if (o.picker_id !== String(picker_id)) return res.status(403).json({ error: 'This order is not assigned to you' });
+    if (o.status !== 'PICKING') return res.status(400).json({ error: 'Tap Start Picking first' });
+
+    const result = await pool.query(
+      `UPDATE order_lines
+          SET picked_qty = CASE WHEN $3::numeric IS NULL THEN NULL ELSE LEAST(GREATEST($3::numeric, 0), qty) END,
+              picked_at  = CASE WHEN $3::numeric IS NULL THEN NULL ELSE NOW() END
+        WHERE id = $2 AND order_id = $1
+        RETURNING id, qty::float AS qty, picked_qty::float AS picked_qty, picked_at`,
+      [req.params.id, req.params.lineId, raw === null || raw === undefined || raw === '' ? null : Number(raw)]);
+    if (!result.rows[0]) return res.status(404).json({ error: 'Item not found' });
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -575,6 +649,8 @@ async function deleteOrders(client, ids, includeStarted) {
   for (const r of refs.rows) {
     await client.query(`DELETE FROM ${r.tbl} WHERE ${r.col}::text = ANY($1::text[])`, [okIds]);
   }
+  const hasLines = await client.query(`SELECT to_regclass('public.order_lines') IS NOT NULL AS ok`);
+  if (hasLines.rows[0].ok) await client.query(`DELETE FROM order_lines WHERE order_id = ANY($1::text[])`, [okIds]);
   const del = await client.query('DELETE FROM orders WHERE id::text = ANY($1::text[])', [okIds]);
   return { deleted: del.rowCount, skipped: ids.length - del.rowCount };
 }

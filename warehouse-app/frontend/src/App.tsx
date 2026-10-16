@@ -9,6 +9,7 @@ import PickerSelectPage from './pages/PickerSelectPage';
 import PickerDashboard from './pages/PickerDashboard';
 import CheckerSelectPage from './pages/CheckerSelectPage';
 import CheckerDashboard from './pages/CheckerDashboard';
+import PickSheet from './pages/PickSheet';
 import OrdersPage from './pages/admin/OrdersPanel'
 import ApprovedOrdersPage from './pages/admin/ApprovedOrdersPage';
 import SignOffPage from './pages/admin/SignOffPage';
@@ -32,6 +33,8 @@ function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/pickers" element={<PickerSelectPage />} />
           <Route path="/picker/:id" element={<PickerDashboard />} />
+          <Route path="/picker/:id/pick/:orderId" element={<PickSheet />} />
+          <Route path="/sheet/:orderId" element={<PickSheet />} />
           <Route path="/checkers" element={<CheckerSelectPage />} />
           <Route path="/checker/:id" element={<CheckerDashboard />} />
 

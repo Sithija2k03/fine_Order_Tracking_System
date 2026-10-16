@@ -31,6 +31,9 @@ interface Order {
   approved_by_name: string;
   approved_at: string;
   cancelled_at?: string | null;
+  line_count?: number;
+  lines_done?: number;
+  lines_short?: number;
   cancelled_by?: string | null;
 }
 
@@ -706,6 +709,15 @@ export default function OrdersPage() {
                     </td>
                     <td className="px-4 py-3">
                       <span className={`px-2 py-1 rounded-lg text-xs font-bold ${STATUS_COLORS[o.status] || ''}`}>{o.status}</span>
+                      {(o.line_count || 0) > 0 && (
+                        <button onClick={() => navigate(`/sheet/${o.id}`)} title="View item list"
+                          className="ml-1.5 text-[11px] font-bold text-blue-600 hover:underline">
+                          📋 {o.status === 'PICKING' || o.lines_done ? `${o.lines_done}/${o.line_count}` : o.line_count}
+                        </button>
+                      )}
+                      {(o.lines_short || 0) > 0 && (
+                        <span className="ml-1.5 bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded text-[10px] font-bold" title="Items picked short">⚠ {o.lines_short} short</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-blue-700 font-medium">{o.size || '—'}</td>
                     <td className="px-4 py-3">
@@ -802,6 +814,15 @@ export default function OrdersPage() {
                     <span className={`font-bold text-base whitespace-nowrap ${isCancelled ? 'text-red-800 line-through' : 'text-blue-900'}`}>{o.so_number}</span>
                     {isNew(o) && <span className="bg-green-500 text-white px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0">NEW</span>}
                     <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${STATUS_COLORS[o.status] || ''}`}>{o.status}</span>
+                    {(o.lines_short || 0) > 0 && (
+                      <span className="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded text-[10px] font-bold">⚠ {o.lines_short} short</span>
+                    )}
+                    {(o.line_count || 0) > 0 && (
+                      <button onClick={e => { e.stopPropagation(); navigate(`/sheet/${o.id}`); }}
+                        className="text-[11px] font-semibold text-blue-600 underline underline-offset-2">
+                        📋 {o.line_count} items
+                      </button>
+                    )}
                   </div>
                   <div className="text-xs text-blue-500 mt-0.5">
                     <span className="font-semibold">{o.size || '—'}</span>
@@ -826,7 +847,10 @@ export default function OrdersPage() {
 
               {o.status === 'PICKING' && (
                 <div className="mt-2 flex items-center gap-2 bg-yellow-50 border border-yellow-200 rounded-xl px-3 py-2">
-                  <span className="flex-1 text-xs text-yellow-800">🔄 Being picked by <b>{o.picker_name || '—'}</b></span>
+                  <span className="flex-1 text-xs text-yellow-800">
+                    🔄 Being picked by <b>{o.picker_name || '—'}</b>
+                    {(o.line_count || 0) > 0 && <> · <b>{o.lines_done}/{o.line_count}</b> items</>}
+                  </span>
                   <button onClick={() => unassignOrders([o])}
                     className="shrink-0 bg-white border border-orange-300 text-orange-700 font-bold px-3 py-1.5 rounded-lg text-xs active:scale-95">
                     ↩ Unassign

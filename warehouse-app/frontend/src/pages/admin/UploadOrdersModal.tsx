@@ -17,6 +17,7 @@ interface ParsedOrder {
   already_exists: boolean;
   existing_status: string | null;
   existing_picker: string | null;
+  items: { item: string; qty: number; unit?: string; code?: string; location?: string }[];
 }
 
 interface Row extends ParsedOrder {
@@ -117,6 +118,9 @@ export default function UploadOrdersModal({ department, pickers, onClose, onImpo
           size: r.size,
           delivery_type: r.delivery_type,
           picker_id: r.picker_id || undefined,
+          customer: r.customer,
+          salesman: r.salesman,
+          items: r.items,          // item lines → the picker's digital sales order
         })),
       });
       const { created, skipped, orders } = res.data;

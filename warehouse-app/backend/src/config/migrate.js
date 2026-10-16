@@ -49,6 +49,23 @@ const STATEMENTS = [
      END LOOP;
    END $$`,
 
+  // Sales order lines — the digital pick list (one row per item)
+  `ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_name TEXT`,
+  `ALTER TABLE orders ADD COLUMN IF NOT EXISTS sales_rep TEXT`,
+  `CREATE TABLE IF NOT EXISTS order_lines (
+     id          SERIAL PRIMARY KEY,
+     order_id    TEXT        NOT NULL,
+     line_no     INT         NOT NULL,
+     item_code   TEXT,
+     description TEXT        NOT NULL,
+     qty         NUMERIC     NOT NULL DEFAULT 0,
+     unit        TEXT,
+     location    TEXT,
+     picked_qty  NUMERIC,
+     picked_at   TIMESTAMPTZ
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_order_lines_order ON order_lines (order_id, line_no)`,
+
   // Speed up the daily dashboards
   `CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders (created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_orders_picker_id  ON orders (picker_id)`,

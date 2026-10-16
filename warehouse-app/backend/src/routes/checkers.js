@@ -51,6 +51,9 @@ router.get('/:id/orders', async (req, res) => {
     // Orders ready to be checked (PICKED status)
     const q_available = pool.query(
       `SELECT o.id, o.so_number, o.status, o.size, o.delivery_type,
+              (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id::text AND l.picked_qty IS NOT NULL AND l.picked_qty < l.qty)::int AS lines_short,
+              (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id::text AND l.picked_qty IS NULL)::int AS lines_unchecked,
+              (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id::text)::int AS line_count,
               o.needs_second_checker, o.checker_id,
               p.name AS picker_name,
               c.name AS checker1_name
@@ -66,6 +69,9 @@ router.get('/:id/orders', async (req, res) => {
     // Orders needing second checker (PICKED, needs_second_checker=true, no checker2 yet)
     const q_needSecond = pool.query(
       `SELECT o.id, o.so_number, o.status, o.size, o.delivery_type,
+              (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id::text AND l.picked_qty IS NOT NULL AND l.picked_qty < l.qty)::int AS lines_short,
+              (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id::text AND l.picked_qty IS NULL)::int AS lines_unchecked,
+              (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id::text)::int AS line_count,
               o.needs_second_checker, o.checker_id,
               p.name AS picker_name,
               c.name AS checker1_name
@@ -84,6 +90,9 @@ router.get('/:id/orders', async (req, res) => {
     // Orders this checker is currently checking (as checker 1)
     const q_mine = pool.query(
       `SELECT o.id, o.so_number, o.status, o.size, o.delivery_type,
+              (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id::text AND l.picked_qty IS NOT NULL AND l.picked_qty < l.qty)::int AS lines_short,
+              (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id::text AND l.picked_qty IS NULL)::int AS lines_unchecked,
+              (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id::text)::int AS line_count,
               o.needs_second_checker, o.checker2_id,
               p.name AS picker_name,
               c2.name AS checker2_name
@@ -98,6 +107,9 @@ router.get('/:id/orders', async (req, res) => {
     // Orders this checker is checking as checker 2
     const q_mineAsChecker2 = pool.query(
       `SELECT o.id, o.so_number, o.status, o.size, o.delivery_type,
+              (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id::text AND l.picked_qty IS NOT NULL AND l.picked_qty < l.qty)::int AS lines_short,
+              (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id::text AND l.picked_qty IS NULL)::int AS lines_unchecked,
+              (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id::text)::int AS line_count,
               o.needs_second_checker,
               p.name AS picker_name,
               c1.name AS checker1_name
@@ -112,6 +124,9 @@ router.get('/:id/orders', async (req, res) => {
     // Done orders
     const q_done = pool.query(
       `SELECT o.id, o.so_number, o.status, o.size, o.delivery_type,
+              (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id::text AND l.picked_qty IS NOT NULL AND l.picked_qty < l.qty)::int AS lines_short,
+              (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id::text AND l.picked_qty IS NULL)::int AS lines_unchecked,
+              (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id::text)::int AS line_count,
               p.name AS picker_name
        FROM orders o
        LEFT JOIN pickers p ON o.picker_id = p.id
