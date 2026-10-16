@@ -18,6 +18,8 @@ interface ParsedOrder {
   existing_status: string | null;
   existing_picker: string | null;
   existing_line_count: number | null;
+  items_changed: boolean;
+  items_locked: boolean;
   items: { item: string; qty: number; unit?: string; code?: string; location?: string }[];
   address?: string;
   phone?: string;
@@ -105,7 +107,13 @@ export default function UploadOrdersModal({ department, pickers, onClose, onImpo
 
   // ── Step 2: create the selected orders ──
   // Orders already in the system with no item list yet — their items get filled in on import
-  const backfillRows = (rows ?? []).filter(r => r.already_exists && r.existing_line_count === 0 && r.items?.length);
+  // (or whose list differs from the report and hasn't been ticked yet) get it added / refreshed
+  const backfillRows = (rows ?? []).filter(r => r.already_exists && r.items_changed && !r.items_locked && r.items?.length);
+  const newLists = backfillRows.filter(r => !r.existing_line_count).length;
+  const refreshedLists = backfillRows.length - newLists;
+  // Safety net: quantities that came out as 0 usually mean the Qty column wasn't recognised
+  const zeroQtyLines = (rows ?? []).reduce((n, r) => n + (r.items || []).filter(it => !Number(it.qty)).length, 0);
+  const allLines = (rows ?? []).reduce((n, r) => n + (r.items || []).length, 0);
   const canImport = selected.length > 0 || backfillRows.length > 0;
 
   const importOrders = async () => {
@@ -233,8 +241,17 @@ export default function UploadOrdersModal({ department, pickers, onClose, onImpo
 
               {backfillRows.length > 0 && (
                 <div className="bg-blue-50 border border-blue-300 text-blue-900 px-4 py-3 rounded-xl mt-4 text-sm">
-                  📋 <b>{backfillRows.length} order{backfillRows.length === 1 ? '' : 's'} already in the system {backfillRows.length === 1 ? 'has' : 'have'} no item list</b> yet.
-                  Importing will add their items so pickers get the digital sales order — assignments and progress stay as they are.
+                  📋 Item lists will be {newLists > 0 && <><b>added to {newLists}</b> order{newLists === 1 ? '' : 's'}</>}
+                  {newLists > 0 && refreshedLists > 0 && ' and '}
+                  {refreshedLists > 0 && <><b>updated for {refreshedLists}</b> order{refreshedLists === 1 ? '' : 's'}</>} already in the system,
+                  so pickers get the right digital sales order. Assignments and progress stay as they are; orders a picker has started ticking are left alone.
+                </div>
+              )}
+
+              {zeroQtyLines > 0 && (
+                <div className="bg-red-50 border border-red-300 text-red-800 px-4 py-3 rounded-xl mt-4 text-sm">
+                  ⚠ <b>{zeroQtyLines} of {allLines} item lines have quantity 0.</b> The report's Qty column may not have been read correctly —
+                  check the file before importing.
                 </div>
               )}
 
@@ -405,9 +422,9 @@ export default function UploadOrdersModal({ department, pickers, onClose, onImpo
             <button onClick={importOrders} disabled={!canImport || !!busy}
               className="bg-blue-600 hover:bg-blue-700 active:scale-95 disabled:bg-blue-300 text-white font-bold px-6 py-3 rounded-xl text-sm transition-all">
               {busy === 'importing' ? 'Importing…'
-                : selected.length && backfillRows.length ? `✅ Import ${selected.length} + add items to ${backfillRows.length}`
+                : selected.length && backfillRows.length ? `✅ Import ${selected.length} + update items for ${backfillRows.length}`
                 : selected.length ? `✅ Import ${selected.length} order${selected.length === 1 ? '' : 's'}`
-                : `📋 Add item lists to ${backfillRows.length} order${backfillRows.length === 1 ? '' : 's'}`}
+                : `📋 Update item lists (${backfillRows.length} order${backfillRows.length === 1 ? '' : 's'})`}
             </button>
           )}
         </div>

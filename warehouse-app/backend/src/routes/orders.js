@@ -191,7 +191,7 @@ router.post('/upload/preview', auth, (req, res) => {
 
       // Flag orders that are already in the system for this department
       const existing = await pool.query(
-        `SELECT o.so_number, o.status, DATE(o.created_at) AS created_date, p.name AS picker_name,
+        `SELECT o.id::text AS id, o.so_number, o.status, DATE(o.created_at) AS created_date, p.name AS picker_name,
                 (SELECT COUNT(*) FROM order_lines l WHERE l.order_id = o.id::text)::int AS line_count
            FROM orders o
            LEFT JOIN pickers p ON p.id = o.picker_id
@@ -200,6 +200,7 @@ router.post('/upload/preview', auth, (req, res) => {
                    : [parsed.orders.map(o => o.so_number)]
       );
       const already = new Map(existing.rows.map(r => [r.so_number, r]));
+      const stored = await storedLines(pool, existing.rows.map(r => r.id)).catch(() => new Map());
 
       res.json({
         ...parsed,
@@ -209,6 +210,11 @@ router.post('/upload/preview', auth, (req, res) => {
           existing_status: already.get(o.so_number)?.status || null,
           existing_picker: already.get(o.so_number)?.picker_name || null,
           existing_line_count: already.has(o.so_number) ? already.get(o.so_number).line_count : null,
+          // Item list in the system differs from the report and nothing has been ticked yet → can be refreshed
+          items_changed: already.has(o.so_number)
+            ? lineSig(stored.get(already.get(o.so_number).id) || []) !== lineSig(reportItems(o.items)) : false,
+          items_locked: already.has(o.so_number)
+            ? (stored.get(already.get(o.so_number).id) || []).some(l => l.picked_qty !== null) : false,
         })),
       });
     } catch (err) {
@@ -216,6 +222,26 @@ router.post('/upload/preview', auth, (req, res) => {
     }
   });
 });
+
+// Compare an order's stored item list with the report's, to know whether it needs refreshing
+const lineSig = (rows) => rows.map(r =>
+  [r.code ?? r.item_code ?? '', r.item ?? r.description ?? '', Number(r.qty) || 0, r.unit || '', r.location || ''].join('|')
+).join('\n');
+const reportItems = (items) => (Array.isArray(items) ? items.filter(it => it && (it.item || it.qty)) : [])
+  .map(it => ({ code: it.code || '', item: String(it.item || '').slice(0, 300), qty: Number(it.qty) || 0, unit: it.unit || '', location: it.location || '' }));
+
+async function storedLines(db, orderIds) {
+  if (!orderIds.length) return new Map();
+  const r = await db.query(
+    `SELECT order_id, item_code, description, qty::float AS qty, unit, location, picked_qty
+       FROM order_lines WHERE order_id = ANY($1::text[]) ORDER BY order_id, line_no`, [orderIds]);
+  const m = new Map();
+  for (const row of r.rows) {
+    if (!m.has(row.order_id)) m.set(row.order_id, []);
+    m.get(row.order_id).push(row);
+  }
+  return m;
+}
 
 const validDate = (d) => (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null);
 
@@ -293,32 +319,36 @@ router.post('/bulk', auth, async (req, res) => {
       created.push(order);
     }
 
-    // Fill in item lists for existing orders that don't have one yet
+    // Item lists for existing orders: add them if missing, or refresh them when the report
+    // differs and the picker hasn't ticked anything yet. Picker, status and progress stay as they are.
     let backfilled = 0;
     for (const b of backfill) {
       const so = String(b.so_number || '').trim().toUpperCase();
       if (!so) continue;
       const found = await client.query(
-        `SELECT o.id FROM orders o
+        `SELECT o.id::text AS id FROM orders o
           WHERE o.department = $1 AND o.so_number = $2
-            AND NOT EXISTS (SELECT 1 FROM order_lines l WHERE l.order_id = o.id::text)
           ORDER BY o.created_at DESC LIMIT 1`,
         [department, so]);
-      if (!found.rows[0]) continue;
-      const n = await insertLines(client, found.rows[0].id, b.items);
-      if (n) {
-        backfilled++;
-        await client.query(
-          `UPDATE orders SET customer_name    = COALESCE(customer_name, $2),
-                             sales_rep        = COALESCE(sales_rep, $3),
-                             customer_address = COALESCE(customer_address, $4),
-                             customer_phone   = COALESCE(customer_phone, $5),
-                             order_type       = COALESCE(order_type, $6),
-                             report_date      = COALESCE(report_date, $7)
-            WHERE id = $1`,
-          [found.rows[0].id, b.customer || null, b.salesman || null, b.address || null,
-           b.phone || null, b.order_type || null, validDate(b.date)]);
-      }
+      const orderId = found.rows[0]?.id;
+      if (!orderId) continue;
+      const current = (await storedLines(client, [orderId])).get(orderId) || [];
+      if (current.some(l => l.picked_qty !== null)) continue;            // picking under way — leave it
+      const incoming = reportItems(b.items);
+      if (!incoming.length || lineSig(current) === lineSig(incoming)) continue;
+      await client.query('DELETE FROM order_lines WHERE order_id = $1', [orderId]);
+      await insertLines(client, orderId, b.items);
+      backfilled++;
+      await client.query(
+        `UPDATE orders SET customer_name    = COALESCE($2, customer_name),
+                           sales_rep        = COALESCE($3, sales_rep),
+                           customer_address = COALESCE($4, customer_address),
+                           customer_phone   = COALESCE($5, customer_phone),
+                           order_type       = COALESCE($6, order_type),
+                           report_date      = COALESCE($7, report_date)
+          WHERE id::text = $1`,
+        [orderId, b.customer || null, b.salesman || null, b.address || null,
+         b.phone || null, b.order_type || null, validDate(b.date)]);
     }
 
     await client.query('COMMIT');
