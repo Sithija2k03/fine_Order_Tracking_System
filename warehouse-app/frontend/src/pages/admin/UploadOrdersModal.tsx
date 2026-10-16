@@ -19,6 +19,8 @@ interface ParsedOrder {
   existing_picker: string | null;
   existing_line_count: number | null;
   items: { item: string; qty: number; unit?: string; code?: string; location?: string }[];
+  address?: string;
+  phone?: string;
 }
 
 interface Row extends ParsedOrder {
@@ -125,10 +127,15 @@ export default function UploadOrdersModal({ department, pickers, onClose, onImpo
           picker_id: r.picker_id || undefined,
           customer: r.customer,
           salesman: r.salesman,
+          address: r.address,
+          phone: r.phone,
+          order_type: r.order_type,
+          date: r.date,
           items: r.items,          // item lines → the picker's digital sales order
         })),
         backfill: backfillRows.map(r => ({
           so_number: r.so_number, items: r.items, customer: r.customer, salesman: r.salesman,
+          address: r.address, phone: r.phone, order_type: r.order_type, date: r.date,
         })),
       });
       const { created, skipped, orders, backfilled } = res.data;

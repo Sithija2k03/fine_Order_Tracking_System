@@ -217,6 +217,8 @@ router.post('/upload/preview', auth, (req, res) => {
   });
 });
 
+const validDate = (d) => (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null);
+
 // Insert item lines for one order (the picker's digital sales order)
 async function insertLines(client, orderId, rawItems) {
   const items = Array.isArray(rawItems) ? rawItems.filter(it => it && (it.item || it.qty)) : [];
@@ -278,10 +280,12 @@ router.post('/bulk', auth, async (req, res) => {
 
       const result = await client.query(
         `INSERT INTO orders (so_number, size, delivery_type, department, picker_id, status,
-                             customer_name, sales_rep, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, clock_timestamp()) RETURNING *`,
+                             customer_name, sales_rep, customer_address, customer_phone, order_type,
+                             report_date, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, clock_timestamp()) RETURNING *`,
         [so, o.size, o.delivery_type, department, o.picker_id || null,
-         o.picker_id ? 'ASSIGNED' : 'UNASSIGNED', o.customer || null, o.salesman || null]);
+         o.picker_id ? 'ASSIGNED' : 'UNASSIGNED', o.customer || null, o.salesman || null,
+         o.address || null, o.phone || null, o.order_type || null, validDate(o.date)]);
       const order = result.rows[0];
 
       // Item lines for the picker's digital sales order
@@ -305,9 +309,15 @@ router.post('/bulk', auth, async (req, res) => {
       if (n) {
         backfilled++;
         await client.query(
-          `UPDATE orders SET customer_name = COALESCE(customer_name, $2), sales_rep = COALESCE(sales_rep, $3)
+          `UPDATE orders SET customer_name    = COALESCE(customer_name, $2),
+                             sales_rep        = COALESCE(sales_rep, $3),
+                             customer_address = COALESCE(customer_address, $4),
+                             customer_phone   = COALESCE(customer_phone, $5),
+                             order_type       = COALESCE(order_type, $6),
+                             report_date      = COALESCE(report_date, $7)
             WHERE id = $1`,
-          [found.rows[0].id, b.customer || null, b.salesman || null]);
+          [found.rows[0].id, b.customer || null, b.salesman || null, b.address || null,
+           b.phone || null, b.order_type || null, validDate(b.date)]);
       }
     }
 
@@ -437,7 +447,8 @@ router.get('/:id/sheet', async (req, res) => {
   try {
     const order = await pool.query(
       `SELECT o.id, o.so_number, o.status, o.size, o.delivery_type, o.department,
-              o.customer_name, o.sales_rep, o.created_at, o.picker_start,
+              o.customer_name, o.sales_rep, o.customer_address, o.customer_phone, o.order_type,
+              o.report_date, o.cartons, o.created_at, o.picker_start, o.picker_end,
               o.picker_id, p.name AS picker_name
          FROM orders o LEFT JOIN pickers p ON p.id = o.picker_id
         WHERE o.id::text = $1`,
@@ -502,15 +513,18 @@ router.patch('/:id/start-picking', async (req, res) => {
 // End picking
 router.patch('/:id/end-picking', async (req, res) => {
   const { picker_id } = req.body;
+  // Optional "No of Carton" from the digital sales order
+  const cartons = Number.isInteger(Number(req.body.cartons)) && Number(req.body.cartons) > 0 ? Number(req.body.cartons) : null;
   try {
     const result = await pool.query(
       `UPDATE orders 
        SET status     = 'PICKED', 
            picker_end = NOW(),
            idle_start = NOW(),
+           cartons    = COALESCE($3, cartons),
            updated_at = NOW()
        WHERE id = $1 AND picker_id = $2 AND status = 'PICKING' RETURNING *`,
-      [req.params.id, picker_id]
+      [req.params.id, picker_id, cartons]
     );
     if (!result.rows[0]) return res.status(400).json({ error: 'Cannot end picking' });
     res.json(result.rows[0]);

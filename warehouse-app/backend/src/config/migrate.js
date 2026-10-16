@@ -52,6 +52,11 @@ const STATEMENTS = [
   // Sales order lines — the digital pick list (one row per item)
   `ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_name TEXT`,
   `ALTER TABLE orders ADD COLUMN IF NOT EXISTS sales_rep TEXT`,
+  `ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_address TEXT`,
+  `ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_phone TEXT`,
+  `ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_type TEXT`,
+  `ALTER TABLE orders ADD COLUMN IF NOT EXISTS report_date DATE`,
+  `ALTER TABLE orders ADD COLUMN IF NOT EXISTS cartons INT`,
   `CREATE TABLE IF NOT EXISTS order_lines (
      id          SERIAL PRIMARY KEY,
      order_id    TEXT        NOT NULL,

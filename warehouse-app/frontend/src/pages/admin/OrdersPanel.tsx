@@ -426,6 +426,7 @@ export default function OrdersPage() {
   }, [byDelivery, filter, search, newIds, sort]);
   const isNew = (o: Order) => newIds.has(String(o.id)) && o.status === 'UNASSIGNED';
   const freshCount = orders.filter(isNew).length;
+  const missingItems = orders.filter(o => ['UNASSIGNED', 'ASSIGNED', 'PICKING'].includes(o.status) && !(o.line_count || 0)).length;
 
   const selectableVisible = filtered;
   const allVisibleSelected = selectableVisible.length > 0 && selectableVisible.every(o => selected.has(o.id));
@@ -605,6 +606,18 @@ export default function OrdersPage() {
                 Cancel
               </button>
             </div>
+          </div>
+        )}
+
+        {/* Orders without an item list (uploaded before item lists were saved, or added manually) */}
+        {missingItems > 0 && date === today && (
+          <div className="bg-amber-500/90 text-blue-950 rounded-2xl px-4 py-3 mb-3 flex items-center gap-3">
+            <span className="flex-1 text-sm font-semibold">
+              📋 {missingItems} open order{missingItems === 1 ? ' has' : 's have'} no item list — pickers will see an empty sales order.
+              Re-upload today's report to add them.
+            </span>
+            <button onClick={() => setShowUpload(true)}
+              className="shrink-0 bg-blue-950 text-white font-bold px-3 py-2 rounded-xl text-xs active:scale-95">📤 Upload</button>
           </div>
         )}
 

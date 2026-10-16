@@ -43,6 +43,11 @@ const COLUMNS = {
   salesman:    ['salesman'],
   customer:    ['particulars', 'customer', 'partyname'],
   orderType:   ['ordertype'],
+  address1:    ['address1', 'address'],
+  address2:    ['address2'],
+  address3:    ['address3'],
+  address4:    ['address4'],
+  mobile:      ['mobno', 'mobileno', 'mobile', 'phone', 'phoneno', 'contactno'],
   itemDetails: ['itemdetails', 'item', 'itemname'],
   qty:         ['qty', 'quantity'],
   unit:        ['unit', 'uom'],
@@ -160,6 +165,10 @@ async function parseSalesOrderReport(buffer) {
           salesman:          clean(get(row, 'salesman')),
           customer:          clean(get(row, 'customer')),
           order_type:        clean(get(row, 'orderType')),
+          // Address lines, without repeats (the report often repeats the town)
+          address:           [...new Set(['address1', 'address2', 'address3', 'address4']
+                               .map(f => clean(get(row, f)).replace(/,{2,}/g, ',').replace(/,+\s*$/, '')).filter(Boolean))].join('\n'),
+          phone:             clean(get(row, 'mobile')),
           line_count:        0,
           total_qty:         0,
           total_amount:      0,

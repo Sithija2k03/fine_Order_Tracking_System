@@ -54,11 +54,8 @@ export default function PickerDashboard() {
   // Start picking → straight into the digital sales order when it has an item list
   const startPicking = async (orderId: string) => {
     const ok = await act(orderId, 'start-picking', 'PICKING', 'ASSIGNED', '🚀 Picking started');
-    if (!ok) return;
-    if ((orders.find(o => o.id === orderId)?.line_count || 0) > 0) openSheet(orderId);
-    else toast('ℹ No item list for this order — ask the admin to re-upload today\'s report', { type: 'info', ms: 4000 });
+    if (ok) openSheet(orderId);    // always pop up the digital sales order
   };
-  const endPicking   = (orderId: string) => act(orderId, 'end-picking', 'PICKED', 'PICKING', '✅ Picking completed');
 
   const assigned = orders.filter(o => o.status === 'ASSIGNED');
   const picking  = orders.filter(o => o.status === 'PICKING');
@@ -147,8 +144,7 @@ export default function PickerDashboard() {
                     </div>
                   </div>
                   {o.customer_name && <p className="text-blue-700 text-sm -mt-2 mb-3 truncate">{o.customer_name}</p>}
-                  {(o.line_count || 0) > 0 ? (
-                    <>
+                  {(o.line_count || 0) > 0 && (
                       <div className="flex items-center gap-2 mb-2 text-sm">
                         <div className="flex-1 h-2.5 bg-yellow-200 rounded-full overflow-hidden">
                           <div className="h-full bg-green-500 transition-all"
@@ -156,20 +152,11 @@ export default function PickerDashboard() {
                         </div>
                         <span className="font-bold text-blue-900 shrink-0">{o.lines_done || 0}/{o.line_count} items</span>
                       </div>
-                      <button onClick={() => openSheet(o.id)}
-                        className="w-full bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold py-4 rounded-xl text-base transition-all">
-                        📋 Continue picking
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      onClick={() => endPicking(o.id)}
-                      disabled={busy.has(o.id)}
-                      className="w-full bg-blue-600 hover:bg-blue-700 active:scale-95 disabled:bg-blue-300 text-white font-bold py-4 rounded-xl text-base transition-all"
-                    >
-                      ✅ Finish Picking
-                    </button>
                   )}
+                  <button onClick={() => openSheet(o.id)}
+                    className="w-full bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold py-4 rounded-xl text-base transition-all">
+                    📋 Open sales order
+                  </button>
                 </div>
               ))}
             </div>
@@ -190,14 +177,12 @@ export default function PickerDashboard() {
                       <DeliveryTag type={o.delivery_type} />
                     </div>
                   </div>
-                  {(o.customer_name || (o.line_count || 0) > 0) && (
+                  {(
                     <div className="flex items-center justify-between gap-2 -mt-2 mb-3 text-sm">
                       <span className="text-blue-700 truncate">{o.customer_name}</span>
-                      {(o.line_count || 0) > 0 && (
-                        <button onClick={() => openSheet(o.id)} className="shrink-0 text-blue-600 font-semibold underline underline-offset-2">
-                          {o.line_count} item{o.line_count === 1 ? '' : 's'} · view
-                        </button>
-                      )}
+                      <button onClick={() => openSheet(o.id)} className="shrink-0 text-blue-600 font-semibold underline underline-offset-2">
+                        {(o.line_count || 0) > 0 ? `${o.line_count} item${o.line_count === 1 ? '' : 's'} · view` : 'view order'}
+                      </button>
                     </div>
                   )}
                   <button

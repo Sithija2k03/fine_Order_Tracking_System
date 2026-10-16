@@ -5,9 +5,12 @@ import { useLive } from '../lib/useLive';
 import { useToast } from '../components/Toast';
 
 // ─────────────────────────────────────────────────────────────────────
-// Digital sales order — the picker's pick list.
-// Laid out like the printed BusyWin sales order; the picker taps each item
-// as it's collected (or records a short quantity), then finishes picking.
+// Digital sales order — opens when the picker taps Start Picking.
+// Laid out like the printed BusyWin sales order (customer details left,
+// order details right, S.N. / Code / Description / Qty / Unit / Location
+// table, Taken By / Checked By / Authorized By / No of Carton footer),
+// with a tick box on every line so the picker marks items as collected.
+// Opened from /sheet/:orderId it is read-only (checkers, admin).
 // ─────────────────────────────────────────────────────────────────────
 
 interface Line {
@@ -28,8 +31,15 @@ interface SheetOrder {
   size: string;
   delivery_type: string;
   customer_name: string | null;
+  customer_address: string | null;
+  customer_phone: string | null;
+  order_type: string | null;
   sales_rep: string | null;
+  report_date: string | null;
+  cartons: number | null;
   created_at: string;
+  picker_start: string | null;
+  picker_end: string | null;
   picker_id: string | null;
   picker_name: string | null;
 }
@@ -40,6 +50,9 @@ const DELIVERY_STYLE: Record<string, string> = {
   'Guard-Room': 'bg-amber-100 text-amber-800', Giving: 'bg-slate-100 text-slate-700',
 };
 const fmtQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/\.?0+$/, ''));
+const fmtDate = (d: string) => new Date(d.length === 10 ? d + 'T00:00:00' : d)
+  .toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\//g, '-');
+const fmtTime = (d: string) => new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 const stateOf = (l: Line): 'todo' | 'done' | 'short' =>
   l.picked_qty === null ? 'todo' : l.picked_qty >= l.qty ? 'done' : 'short';
 
@@ -58,17 +71,18 @@ export default function PickSheet() {
   const [sortByLoc, setSortByLoc] = useState(false);
   const [shortLine, setShortLine] = useState<Line | null>(null);
   const [shortQty, setShortQty] = useState('');
+  const [cartons, setCartons] = useState('');
   const [confirmFinish, setConfirmFinish] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  // Pickers come from their dashboard; checkers/admin open it read-only via /sheet/:orderId
   const back = () => (pickerId ? navigate(`/picker/${pickerId}?dept=${dept}`, { replace: true }) : navigate(-1));
-  const canEdit = order?.status === 'PICKING' && order?.picker_id === pickerId;
+  const canEdit = !!pickerId && order?.status === 'PICKING' && order?.picker_id === pickerId;
 
   const done  = lines.filter(l => stateOf(l) === 'done').length;
   const short = lines.filter(l => stateOf(l) === 'short').length;
   const todo  = lines.length - done - short;
   const pct   = lines.length ? Math.round(((done + short) / lines.length) * 100) : 0;
+  const totalQty = lines.reduce((n, l) => n + l.qty, 0);
   const hasLocation = lines.some(l => l.location);
   const hasCode = lines.some(l => l.item_code);
 
@@ -80,7 +94,7 @@ export default function PickSheet() {
 
   // ── Save one line (instant on screen, saved in the background) ──
   const setPicked = async (line: Line, picked: number | null) => {
-    if (!pickerId) return;            // read-only view (checker / admin)
+    if (!pickerId) return;                       // read-only view
     if (!canEdit) { toast(order?.status === 'ASSIGNED' ? '❌ Tap Start Picking first' : '❌ This order is no longer being picked'); return; }
     const before = line.picked_qty;
     live.mutate(s => ({ ...s, lines: s.lines.map(l => (l.id === line.id ? { ...l, picked_qty: picked } : l)) }));
@@ -94,7 +108,6 @@ export default function PickSheet() {
   const tap = (l: Line) => setPicked(l, stateOf(l) === 'todo' ? l.qty : null);
 
   const openShort = (l: Line) => {
-    if (!canEdit) { tap(l); return; }
     setShortLine(l);
     setShortQty(l.picked_qty !== null && l.picked_qty < l.qty ? fmtQty(l.picked_qty) : '');
   };
@@ -121,7 +134,7 @@ export default function PickSheet() {
     setConfirmFinish(false);
     setBusy(true);
     try {
-      await api.patch(`/orders/${orderId}/end-picking`, { picker_id: pickerId });
+      await api.patch(`/orders/${orderId}/end-picking`, { picker_id: pickerId, cartons: cartons ? Number(cartons) : undefined });
       toast(`✅ ${order?.so_number} picked`);
       back();
     } catch (err: any) {
@@ -132,7 +145,7 @@ export default function PickSheet() {
   const askFinish = () => (todo > 0 || short > 0 ? setConfirmFinish(true) : finish());
 
   if (live.loading) {
-    return <div className="min-h-screen bg-slate-100 p-4"><div className="max-w-2xl mx-auto h-64 rounded-2xl bg-white animate-pulse" /></div>;
+    return <div className="min-h-screen bg-slate-200 p-3"><div className="max-w-3xl mx-auto h-[70vh] rounded bg-white animate-pulse" /></div>;
   }
   if (!order) {
     return (
@@ -143,14 +156,18 @@ export default function PickSheet() {
     );
   }
 
+  const cell = 'px-2 py-2.5 align-top';
+
   return (
-    <div className="min-h-screen bg-slate-100 pb-28">
+    <div className="min-h-screen bg-slate-200 pb-32">
       {/* Top bar */}
       <div className="sticky top-0 z-30 bg-blue-950 text-white shadow-lg">
-        <div className="max-w-2xl mx-auto flex items-center gap-3 px-3 py-2.5">
+        <div className="max-w-3xl mx-auto flex items-center gap-3 px-3 py-2.5">
           <button onClick={back} aria-label="Back" className="w-10 h-10 rounded-xl bg-blue-800 hover:bg-blue-700 font-bold shrink-0">←</button>
           <div className="flex-1 min-w-0">
-            <div className="text-[10px] uppercase tracking-widest text-blue-300 font-semibold">Sales Order · {pickerId ? 'Pick List' : 'View only'}</div>
+            <div className="text-[10px] uppercase tracking-widest text-blue-300 font-semibold">
+              Sales Order · {pickerId ? 'tick items as you collect them' : 'view only'}
+            </div>
             <div className="font-bold text-lg leading-tight truncate">{order.so_number}</div>
           </div>
           {lines.length > 0 && (
@@ -167,119 +184,154 @@ export default function PickSheet() {
         )}
       </div>
 
-      <div className="max-w-2xl mx-auto px-3 pt-3">
-        {/* Order header — same details as the printed copy */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
-          <div className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1">
-            <div className="min-w-0">
-              <div className="text-[11px] text-slate-400 font-semibold uppercase tracking-wide">Customer</div>
-              <div className="font-bold text-slate-900 leading-snug">{order.customer_name || '—'}</div>
-            </div>
-            <div className="text-right">
-              <span className={`inline-block px-2.5 py-1 rounded-lg text-xs font-bold ${DELIVERY_STYLE[order.delivery_type] || 'bg-blue-50 text-blue-700'}`}>
-                {order.delivery_type}
-              </span>
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-2 mt-3 pt-3 border-t border-slate-100 text-xs">
-            <Info label="Dated" value={new Date(order.created_at).toLocaleDateString('en-GB')} />
-            <Info label="Sales Rep" value={order.sales_rep || '—'} />
-            <Info label="Picker" value={order.picker_name || '—'} />
-          </div>
-        </div>
-
+      <div className="max-w-3xl mx-auto px-2 sm:px-3 pt-3">
         {/* Start banner (if opened before starting) */}
-        {order.status === 'ASSIGNED' && order.picker_id === pickerId && (
+        {pickerId && order.status === 'ASSIGNED' && order.picker_id === pickerId && (
           <button onClick={start} disabled={busy}
-            className="mt-3 w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 active:scale-[.99] text-white font-bold py-4 rounded-2xl shadow">
+            className="mb-3 w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 active:scale-[.99] text-white font-bold py-4 rounded-xl shadow">
             🚀 Start Picking
           </button>
         )}
-        {pickerId && ['PICKED', 'CHECKING', 'DONE'].includes(order.status) && (
-          <div className="mt-3 bg-green-50 border border-green-200 text-green-800 rounded-xl px-4 py-3 text-sm font-semibold">
-            ✅ Picking completed — this list is read-only.
-          </div>
-        )}
 
-        {lines.length === 0 ? (
-          <div className="mt-3 bg-white rounded-2xl border border-slate-200 p-6 text-center text-slate-500 text-sm">
-            No item list for this order (it was added manually or before item lists were saved).
-            <br />Pick from the printed copy, then finish below.
+        {/* ── The "paper" ── */}
+        <div className="bg-white shadow-md rounded-sm border border-slate-300 px-3 sm:px-6 py-4 text-[13px] text-slate-900">
+          <div className="text-right text-[11px] italic text-slate-500 -mt-1 mb-1">
+            {pickerId ? 'Digital Copy' : 'Digital Copy · view only'}
           </div>
-        ) : (
-          <>
-            {/* Toolbar */}
-            <div className="flex items-center gap-2 mt-4 mb-2 overflow-x-auto no-scrollbar">
-              <Tab active={view === 'all'} onClick={() => setView('all')}>All <b>{lines.length}</b></Tab>
-              <Tab active={view === 'todo'} onClick={() => setView('todo')}>To collect <b>{todo}</b></Tab>
-              {hasLocation && (
-                <Tab active={sortByLoc} onClick={() => setSortByLoc(v => !v)}>📍 By location</Tab>
+
+          {/* Header — customer left, order details right */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
+            <div className="min-w-0">
+              <div className="text-slate-600">Customer Details :</div>
+              <div className="font-bold text-[15px] leading-snug uppercase">{order.customer_name || '—'}</div>
+              {order.customer_address && (
+                <div className="whitespace-pre-line leading-snug text-slate-700 uppercase">{order.customer_address}</div>
               )}
-              <span className="ml-auto shrink-0 text-xs text-slate-500">
+              {order.customer_phone && <div className="text-slate-700 mt-0.5">{order.customer_phone}</div>}
+            </div>
+            <dl className="grid grid-cols-[auto_auto_1fr] gap-x-2 gap-y-0.5 self-start">
+              <Row label="Fine.Order No." value={<b>{order.so_number}</b>} />
+              <Row label="Dated" value={fmtDate(order.report_date || order.created_at)} />
+              <Row label="Sales Rep" value={order.sales_rep || '—'} />
+              <Row label="Delivery Type" value={
+                <span className={`inline-block px-2 py-px rounded font-bold text-xs ${DELIVERY_STYLE[order.delivery_type] || 'bg-blue-50 text-blue-700'}`}>
+                  {order.delivery_type}
+                </span>} />
+              {order.order_type && <Row label="Note" value={order.order_type} />}
+            </dl>
+          </div>
+
+          {/* Toolbar */}
+          {lines.length > 0 && (
+            <div className="flex items-center gap-2 mt-4 overflow-x-auto no-scrollbar">
+              <Tab active={view === 'all'} onClick={() => setView('all')}>All {lines.length}</Tab>
+              <Tab active={view === 'todo'} onClick={() => setView('todo')}>To collect {todo}</Tab>
+              {hasLocation && <Tab active={sortByLoc} onClick={() => setSortByLoc(v => !v)}>📍 By location</Tab>}
+              <span className="ml-auto shrink-0 text-xs">
                 {done > 0 && <span className="text-green-700 font-semibold">{done} ✓</span>}
                 {short > 0 && <span className="text-amber-700 font-semibold ml-2">{short} short</span>}
               </span>
             </div>
+          )}
 
-            {/* Item lines */}
-            <div className="space-y-2">
-              {shown.length === 0 && (
-                <div className="bg-white rounded-2xl border border-slate-200 p-6 text-center text-green-700 font-semibold">
-                  🎉 Everything collected
-                </div>
+          {/* Items table */}
+          <table className="w-full mt-2 border-collapse">
+            <thead>
+              <tr className="border-y-2 border-slate-800 text-[11px] font-bold text-left">
+                <th className={`${cell} w-8`}>S.N.</th>
+                {hasCode && <th className={`${cell} hidden sm:table-cell`}>Code</th>}
+                <th className={cell}>Description of Goods</th>
+                <th className={`${cell} text-right whitespace-nowrap`}>Qty. Unit</th>
+                {hasLocation && <th className={`${cell} hidden sm:table-cell`}>Location</th>}
+                <th className={`${cell} w-12 text-center`}>✓</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-slate-500">
+                    <div className="text-2xl mb-1">📋</div>
+                    <b>Item list not loaded for this order.</b>
+                    <div className="text-xs mt-1">Admin: re-upload today's sales order report on the Orders page to add it.
+                      {pickerId && ' Meanwhile pick from the printed copy.'}</div>
+                  </td>
+                </tr>
+              )}
+              {lines.length > 0 && shown.length === 0 && (
+                <tr><td colSpan={6} className="py-6 text-center text-green-700 font-semibold">🎉 Everything collected</td></tr>
               )}
               {shown.map(l => {
                 const st = stateOf(l);
                 return (
-                  <div key={l.id}
-                    className={`rounded-2xl border shadow-sm transition-all
-                      ${st === 'done' ? 'bg-green-50 border-green-200' : st === 'short' ? 'bg-amber-50 border-amber-300' : 'bg-white border-slate-200'}`}>
-                    <button onClick={() => tap(l)} className="w-full text-left flex items-start gap-3 p-3 active:scale-[.99]">
-                      <span className={`mt-0.5 w-9 h-9 shrink-0 rounded-full border-2 flex items-center justify-center text-lg font-bold
-                        ${st === 'done' ? 'bg-green-500 border-green-500 text-white'
-                          : st === 'short' ? 'bg-amber-400 border-amber-400 text-white' : 'border-slate-300 text-transparent'}`}>
-                        {st === 'short' ? '!' : '✓'}
-                      </span>
-                      <span className="flex-1 min-w-0">
-                        <span className="flex items-center gap-2 text-[11px] text-slate-400 font-semibold">
-                          <span>{l.line_no}.</span>
-                          {hasCode && l.item_code && <span className="font-mono text-slate-500">{l.item_code}</span>}
-                          {l.location && <span className="bg-blue-50 text-blue-700 px-1.5 py-px rounded font-mono">📍 {l.location}</span>}
-                        </span>
-                        <span className={`block font-bold leading-snug mt-0.5 ${st === 'done' ? 'text-slate-400 line-through' : 'text-slate-900'}`}>
-                          {l.description}
-                        </span>
-                        {st === 'short' && (
-                          <span className="block text-xs text-amber-800 font-semibold mt-1">
-                            Short: collected {fmtQty(l.picked_qty!)} of {fmtQty(l.qty)}
-                          </span>
-                        )}
-                      </span>
-                      <span className="shrink-0 text-right">
-                        <span className={`block text-2xl font-bold leading-none ${st === 'done' ? 'text-green-700' : 'text-slate-900'}`}>{fmtQty(l.qty)}</span>
-                        <span className="block text-[11px] text-slate-500 mt-0.5">{l.unit || 'Pcs'}</span>
-                      </span>
-                    </button>
-                    {canEdit && st !== 'done' && (
-                      <div className="flex justify-end px-3 pb-2 -mt-1">
-                        <button onClick={() => openShort(l)}
-                          className="text-xs font-semibold text-amber-700 hover:bg-amber-100 px-2.5 py-1 rounded-lg">
+                  <tr key={l.id} onClick={() => tap(l)}
+                    className={`border-b border-slate-200 ${pickerId ? 'cursor-pointer active:bg-slate-100' : ''}
+                      ${st === 'done' ? 'bg-green-50' : st === 'short' ? 'bg-amber-50' : ''}`}>
+                    <td className={`${cell} font-bold`}>{l.line_no}.</td>
+                    {hasCode && <td className={`${cell} hidden sm:table-cell font-bold font-mono text-xs`}>{l.item_code || ''}</td>}
+                    <td className={cell}>
+                      {hasCode && l.item_code && <div className="sm:hidden font-mono text-[11px] font-bold text-slate-500">{l.item_code}</div>}
+                      <div className={`font-bold uppercase leading-snug ${st === 'done' ? 'line-through text-slate-400' : ''}`}>{l.description}</div>
+                      {l.location && <div className="sm:hidden mt-0.5 inline-block bg-blue-50 text-blue-700 px-1.5 rounded font-mono text-[11px] font-bold">📍 {l.location}</div>}
+                      {st === 'short' && (
+                        <div className="text-xs text-amber-800 font-semibold mt-1">Short: collected {fmtQty(l.picked_qty!)} of {fmtQty(l.qty)}</div>
+                      )}
+                      {canEdit && st !== 'done' && (
+                        <button onClick={e => { e.stopPropagation(); openShort(l); }}
+                          className="mt-1 text-[11px] font-semibold text-amber-700 underline underline-offset-2">
                           {st === 'short' ? 'Edit short qty' : 'Not enough stock?'}
                         </button>
-                      </div>
-                    )}
-                  </div>
+                      )}
+                    </td>
+                    <td className={`${cell} text-right whitespace-nowrap`}>
+                      <span className={`text-lg font-bold ${st === 'done' ? 'text-green-700' : ''}`}>{fmtQty(l.qty)}</span>
+                      <span className="text-xs font-semibold ml-1">{l.unit || 'Pcs'}</span>
+                    </td>
+                    {hasLocation && <td className={`${cell} hidden sm:table-cell font-bold font-mono text-xs`}>{l.location || ''}</td>}
+                    <td className={`${cell} text-center`}>
+                      <span className={`inline-flex w-8 h-8 rounded-md border-2 items-center justify-center text-base font-bold
+                        ${st === 'done' ? 'bg-green-600 border-green-600 text-white'
+                          : st === 'short' ? 'bg-amber-400 border-amber-400 text-white' : 'border-slate-400 text-transparent'}`}>
+                        {st === 'short' ? '!' : '✓'}
+                      </span>
+                    </td>
+                  </tr>
                 );
               })}
-            </div>
-          </>
-        )}
+            </tbody>
+            {lines.length > 0 && (
+              <tfoot>
+                <tr className="border-t-2 border-slate-800 font-bold">
+                  <td colSpan={2 + (hasCode ? 1 : 0)} className={`${cell} text-right`}>Total Qty</td>
+                  <td className={`${cell} text-right`}>{fmtQty(totalQty)}</td>
+                  <td colSpan={1 + (hasLocation ? 1 : 0)} />
+                </tr>
+              </tfoot>
+            )}
+          </table>
+
+          {/* Footer — like the bottom of the printed copy */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6 text-center text-xs">
+            <Sign label="Taken By">
+              <b>{order.picker_name || '—'}</b>
+              {order.picker_end && <div className="text-[10px] text-slate-500">{fmtTime(order.picker_end)}</div>}
+            </Sign>
+            <Sign label="Checked By/Date"><span className="text-slate-300">—</span></Sign>
+            <Sign label="Authorized By"><span className="text-slate-300">—</span></Sign>
+            <Sign label="No of Carton">
+              {canEdit ? (
+                <input type="number" inputMode="numeric" min={0} value={cartons} onChange={e => setCartons(e.target.value)}
+                  onClick={e => e.stopPropagation()} placeholder="0"
+                  className="w-16 text-center font-bold text-base border-b-2 border-slate-400 focus:border-blue-600 focus:outline-none" />
+              ) : <b>{order.cartons ?? '—'}</b>}
+            </Sign>
+          </div>
+        </div>
       </div>
 
       {/* Finish bar */}
       {canEdit && (
         <div className="fixed inset-x-0 bottom-16 z-40 px-3 pb-2">
-          <div className="max-w-2xl mx-auto bg-white rounded-2xl shadow-2xl border border-slate-200 p-3 flex items-center gap-3">
+          <div className="max-w-3xl mx-auto bg-white rounded-2xl shadow-2xl border border-slate-200 p-3 flex items-center gap-3">
             <div className="flex-1 min-w-0 text-sm">
               {lines.length > 0 ? (
                 <>
@@ -293,6 +345,13 @@ export default function PickSheet() {
                 ${todo === 0 && lines.length ? 'bg-green-600 hover:bg-green-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
               ✅ Finish Picking
             </button>
+          </div>
+        </div>
+      )}
+      {pickerId && ['PICKED', 'CHECKING', 'DONE'].includes(order.status) && (
+        <div className="max-w-3xl mx-auto px-3 mt-3">
+          <div className="bg-green-50 border border-green-200 text-green-800 rounded-xl px-4 py-3 text-sm font-semibold">
+            ✅ Picking completed — this copy is read-only now.
           </div>
         </div>
       )}
@@ -343,11 +402,21 @@ export default function PickSheet() {
   );
 }
 
-function Info({ label, value }: { label: string; value: string }) {
+function Row({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="min-w-0">
-      <div className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">{label}</div>
-      <div className="font-semibold text-slate-800 truncate">{value}</div>
+    <>
+      <dt className="text-slate-600 whitespace-nowrap">{label}</dt>
+      <dd className="text-slate-600">:</dd>
+      <dd className="min-w-0 break-words">{value}</dd>
+    </>
+  );
+}
+
+function Sign({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col items-center">
+      <div className="min-h-[2.5rem] flex flex-col items-center justify-end">{children}</div>
+      <div className="w-full border-t border-slate-400 mt-1 pt-1 text-slate-600">{label}</div>
     </div>
   );
 }
@@ -355,8 +424,8 @@ function Info({ label, value }: { label: string; value: string }) {
 function Tab({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
   return (
     <button onClick={onClick}
-      className={`shrink-0 px-3.5 py-2 rounded-full text-sm font-semibold border transition-all active:scale-95
-        ${active ? 'bg-blue-900 text-white border-blue-900' : 'bg-white text-slate-600 border-slate-200'}`}>
+      className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all active:scale-95
+        ${active ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-300'}`}>
       {children}
     </button>
   );
